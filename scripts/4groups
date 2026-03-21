@@ -221,14 +221,14 @@ rates_4group_notprivate <- calculate_rates(
 cat("Creating Kruskal count tables (not private)...\n")
 kruskal_counts_4group_notprivate <- list()
 kruskal_counts_4group_notprivate <- create_wilcoxon_kruskal_tables(
-     df          = processed_4group,
+     processed_data    = processed_4group,
     gene_lists  = list(
       brain      = gene_lists$brain,
       brain_ntpm = gene_lists$brain_ntpm
     ),
-    manifest_df = manifest_4group,
+    manifest_data= manifest_4group,
     private     = FALSE,
-    pure        = FALSE
+    pure        = TRUE
   )
 
 
@@ -236,7 +236,7 @@ kruskal_counts_4group_notprivate <- create_wilcoxon_kruskal_tables(
 # Kruskal-Wallis + Dunn post-hoc (auto-detected because >2 groups)
 cat("Running Kruskal-Wallis tests (not private)...\n")
 kruskal_results_4group_notprivate <- run_wilcoxon_kruskal_analysis(
-  data_df          = complete_dfs_4group_notprivate,
+  data_df          = kruskal_counts_4group_notprivate$complete_datasets,
   fdr_scope        = "both",
   run_dunn_posthoc = TRUE
 )
@@ -254,7 +254,7 @@ fisher_plots_4group_notprivate <- create_comprehensive_visualization(
 )
 
 kruskal_plots_notprivate <- create_variant_plots(
-  plot_data        = complete_dfs_4group_notprivate,
+  plot_data        = kruskal_counts_4group_notprivate$complete_datasets,
   results_table    = kruskal_df_notprivate,
   significant_only = TRUE
 )
