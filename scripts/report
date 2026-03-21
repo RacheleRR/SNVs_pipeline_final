@@ -1,0 +1,316 @@
+
+#!excel for enrihcment 
+create_enrichment_excel <- function(
+  datasets = NULL,
+  output_dir = getwd(),
+  gene_lists = NULL,
+  group_column = "sample_label_3",
+  gene_column = "SYMBOL",
+  dedup_columns = c("SYMBOL", "CHROM", "REF", "ALT", "POS", "SAMPLES"),
+  selected_columns = c("CHROM", "POS", "REF", "ALT", "Allele", "IMPACT", "SYMBOL", 
+                      "Consequence", "am_pathogenicity", "LoF", "CANONICAL", "Gene",
+                      "BIOTYPE", "Feature", "SAMPLES", "GENOTYPES", "mis.oe_ci.upper",
+                      "lof.oe_ci.upper", "cds_length", "num_coding_exons",
+                      "sample_label_2", "sample_label", "sample_label_3", "count")
+) {
+  
+  # Create output directory if it doesn't exist
+  if (!dir.exists(output_dir)) {
+    message("Creating output directory: ", output_dir)
+    dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+  }
+  
+  # Set working directory
+  setwd(output_dir)
+  
+  # Load required packages
+  if (!require(dplyr)) stop("dplyr package is required")
+  if (!require(openxlsx)) stop("openxlsx package is required")
+  
+  # --- DEFAULT DATASETS (if not provided) ---
+  if (is.null(datasets)) {
+    datasets <- list(
+      Missense = Missense,
+      Missense_canonical = Missense_canonical,
+      MPC_only = MPC_only,
+      PTV_canonic = PTV_canonic
+    )
+  }
+  
+  # --- DEFAULT GENE LISTS (if not provided) ---
+  if (is.null(gene_lists)) {
+    gene_lists <- list(
+      bipolar = genes_bipolar,
+      schema_pval = genes_schema_pval,
+      schema_qval = genes_schema_qval,
+      gwas = genes_gwas,
+      brain_ntm = unique(brain_gene_consensus_ntm_consensus_no_pitular$Gene.name),
+      brain_2sd = unique(brain_gene_consensus_filtered_consensus_no_pitular$Gene.name)
+    )
+  }
+  
+  # --- VALIDATE INPUTS ---
+  if (!is.list(datasets) || length(datasets) == 0) {
+    stop("datasets must be a non-empty named list of data frames")
+  }
+  
+  if (!is.list(gene_lists) || length(gene_lists) == 0) {
+    stop("gene_lists must be a non-empty named list of gene vectors")
+  }
+  
+  # Check if required columns exist in datasets
+  required_cols <- c(group_column, gene_column, dedup_columns, "sample_label_2")
+  for (ds_name in names(datasets)) {
+    missing_cols <- setdiff(required_cols, names(datasets[[ds_name]]))
+    if (length(missing_cols) > 0) {
+      warning(sprintf("Dataset '%s' missing columns: %s", ds_name, paste(missing_cols, collapse = ", ")))
+    }
+  }
+  
+  # --- CORE FUNCTIONS ---
+  
+  # Split dataset by group
+  split_by_group <- function(df, group_col = group_column) {
+    df %>%
+      split(.[[group_col]]) %>%
+      lapply(function(x) {
+        x %>% 
+          select(any_of(selected_columns)) %>%
+          distinct(across(all_of(dedup_columns)), .keep_all = TRUE)
+      })
+  }
+  
+  # Create safe sheet names
+  create_safe_sheet_name <- function(full_name) {
+    # Use abbreviations
+    short_name <- gsub("pure", "p", full_name)
+    short_name <- gsub("mixed", "m", short_name)
+    short_name <- gsub("bipolar", "bip", short_name)
+    short_name <- gsub("schema_pval", "spv", short_name)
+    short_name <- gsub("schema_qval", "sqv", short_name)
+    short_name <- gsub("brain_ntm", "ntm", short_name)
+    short_name <- gsub("brain_2sd", "2sd", short_name)
+    short_name <- gsub("all genes", "all", short_name)
+    short_name <- gsub("Control", "Ctrl", short_name)
+    short_name <- gsub("Case", "Cs", short_name)
+    short_name <- gsub("Converter", "Conv", short_name)
+    short_name <- gsub("Non_Converter", "NonC", short_name)
+    short_name <- gsub("SCZ", "Sz", short_name)
+    short_name <- gsub("BD", "Bd", short_name)
+    short_name <- gsub("\\+", "&", short_name)  # Replace + with & for better readability
+    
+    # Ensure length is <= 31
+    substr(short_name, 1, 31)
+  }
+  
+  # Main function to create Excel sheets for a single dataset
+  create_dataset_excel <- function(dataset_name, dataset, gene_lists, output_dir) {
+    message("Processing dataset: ", dataset_name)
+    
+    # Create workbook for this specific dataset
+    wb <- createWorkbook()
+    
+    # Split the dataset
+    split_dataset <- split_by_group(dataset)
+    
+    # Get all available groups from group_column
+    available_groups <- names(split_dataset)
+    message("Available groups in ", group_column, ": ", paste(available_groups, collapse = ", "))
+    
+    # Initialize sheets list and summary data
+    sheets_list <- list()
+    summary_data <- data.frame()
+    
+    # Step 1: Create pure sheets for each group
+    for (group in available_groups) {
+      group_data <- split_dataset[[group]]
+      
+      # For PURE sheets (distinct genes) for each gene list
+      for (gene_list_name in names(gene_lists)) {
+        gene_list <- gene_lists[[gene_list_name]]
+        
+        pure_sheet_name <- paste(group, "pure", gene_list_name)
+        sheet_data <- group_data %>%
+          filter(!!sym(gene_column) %in% gene_list) %>%
+          distinct(!!sym(gene_column), .keep_all = TRUE) %>%
+          select(any_of(selected_columns))
+        
+        sheets_list[[pure_sheet_name]] <- sheet_data
+        
+        # Add to summary
+        safe_name <- create_safe_sheet_name(pure_sheet_name)
+        summary_data <- bind_rows(summary_data, data.frame(
+          Original_Name = pure_sheet_name,
+          Sheet_Name = safe_name,
+          Rows = nrow(sheet_data),
+          Unique_Genes = n_distinct(sheet_data[[gene_column]]),
+          Group = group,
+          Type = "Pure",
+          Gene_List = gene_list_name,
+          stringsAsFactors = FALSE
+        ))
+      }
+      
+      # Pure all genes sheet (no filtering)
+      pure_all_sheet_name <- paste(group, "pure all genes")
+      sheet_data <- group_data %>%
+        distinct(!!sym(gene_column), .keep_all = TRUE) %>%
+        select(any_of(selected_columns))
+      
+      sheets_list[[pure_all_sheet_name]] <- sheet_data
+      
+      # Add to summary
+      safe_name <- create_safe_sheet_name(pure_all_sheet_name)
+      summary_data <- bind_rows(summary_data, data.frame(
+        Original_Name = pure_all_sheet_name,
+        Sheet_Name = safe_name,
+        Rows = nrow(sheet_data),
+        Unique_Genes = n_distinct(sheet_data[[gene_column]]),
+        Group = group,
+        Type = "Pure",
+        Gene_List = "All genes",
+        stringsAsFactors = FALSE
+      ))
+    }
+    
+    # Step 2: Handle mixed group - collapse sample_label_2 and match to groups
+    if ("mixed" %in% available_groups) {
+      # Get all mixed data
+      mixed_data <- dataset %>% filter(!!sym(group_column) == "mixed")
+      
+      # For each sample in mixed group, check which group it belongs to based on sample_label_2
+      mixed_samples_by_group <- list()
+      
+      for (group in available_groups) {
+        if (group != "mixed") {
+          # Find samples in mixed group that have this group in their sample_label_2
+          group_mixed_samples <- mixed_data %>%
+            filter(grepl(group, sample_label_2, ignore.case = TRUE))
+          
+          if (nrow(group_mixed_samples) > 0) {
+            mixed_samples_by_group[[group]] <- group_mixed_samples
+            message("Found ", n_distinct(group_mixed_samples$SAMPLES), 
+                   " samples in mixed group for ", group)
+          }
+        }
+      }
+      
+      # Step 3: Create pure + mixed sheets for each group
+      for (group in names(mixed_samples_by_group)) {
+        group_mixed_data <- mixed_samples_by_group[[group]]
+        group_pure_data <- split_dataset[[group]]
+        
+        # Combine pure group data with matched mixed data
+        group_combined_data <- bind_rows(group_pure_data, group_mixed_data)
+        
+        # For each gene list, create pure + mixed sheets
+        for (gene_list_name in names(gene_lists)) {
+          gene_list <- gene_lists[[gene_list_name]]
+          
+          # Pure + mixed sheet (distinct genes)
+          pure_mixed_sheet_name <- paste(group, "pure + mixed", gene_list_name)
+          sheet_data <- group_combined_data %>%
+            filter(!!sym(gene_column) %in% gene_list) %>%
+            distinct(!!sym(gene_column), .keep_all = TRUE) %>%
+            select(any_of(selected_columns))
+          
+          sheets_list[[pure_mixed_sheet_name]] <- sheet_data
+          
+          # Add to summary
+          safe_name <- create_safe_sheet_name(pure_mixed_sheet_name)
+          summary_data <- bind_rows(summary_data, data.frame(
+            Original_Name = pure_mixed_sheet_name,
+            Sheet_Name = safe_name,
+            Rows = nrow(sheet_data),
+            Unique_Genes = n_distinct(sheet_data[[gene_column]]),
+            Group = group,
+            Type = "Pure + Mixed",
+            Gene_List = gene_list_name,
+            stringsAsFactors = FALSE
+          ))
+        }
+        
+        # Pure + mixed all genes sheet (no filtering)
+        pure_mixed_all_sheet_name <- paste(group, "pure + mixed all genes")
+        sheet_data <- group_combined_data %>%
+          distinct(!!sym(gene_column), .keep_all = TRUE) %>%
+          select(any_of(selected_columns))
+        
+        sheets_list[[pure_mixed_all_sheet_name]] <- sheet_data
+        
+        # Add to summary
+        safe_name <- create_safe_sheet_name(pure_mixed_all_sheet_name)
+        summary_data <- bind_rows(summary_data, data.frame(
+          Original_Name = pure_mixed_all_sheet_name,
+          Sheet_Name = safe_name,
+          Rows = nrow(sheet_data),
+          Unique_Genes = n_distinct(sheet_data[[gene_column]]),
+          Group = group,
+          Type = "Pure + Mixed",
+          Gene_List = "All genes",
+          stringsAsFactors = FALSE
+        ))
+      }
+    }
+    
+    # Create safe sheet names and ensure uniqueness
+    safe_sheet_names <- sapply(names(sheets_list), create_safe_sheet_name)
+    safe_sheet_names <- make.unique(safe_sheet_names, sep = "_")
+    
+    # Update summary with final safe names
+    for (i in seq_along(safe_sheet_names)) {
+      orig_name <- names(sheets_list)[i]
+      safe_name <- safe_sheet_names[i]
+      summary_data$Sheet_Name[summary_data$Original_Name == orig_name] <- safe_name
+    }
+    
+    # --- CREATE EXCEL FILE ---
+    
+    # Add summary sheet as FIRST sheet
+    addWorksheet(wb, "Summary", tabColour = "lightblue")
+    writeData(wb, "Summary", summary_data)
+    
+    # Add each data sheet
+    for (i in seq_along(sheets_list)) {
+      addWorksheet(wb, safe_sheet_names[i])
+      writeData(wb, safe_sheet_names[i], sheets_list[[i]])
+    }
+    
+    # Save workbook with dataset name as prefix
+    output_file <- paste0(dataset_name, "_enrichment_results.xlsx")
+    saveWorkbook(wb, output_file, overwrite = TRUE)
+    
+    message("Created: ", output_file)
+    message("Total sheets: ", length(sheets_list))
+    
+    return(list(
+      file = output_file,
+      sheets_created = length(sheets_list),
+      summary = summary_data
+    ))
+  }
+  
+  # --- MAIN PROCESSING ---
+  
+  # Process each dataset and create separate Excel files
+  results <- list()
+  for (dataset_name in names(datasets)) {
+    result <- create_dataset_excel(
+      dataset_name = dataset_name,
+      dataset = datasets[[dataset_name]],
+      gene_lists = gene_lists,
+      output_dir = output_dir
+    )
+    results[[dataset_name]] <- result
+  }
+  
+  # Final summary
+  message("\n=== PROCESSING COMPLETE ===")
+  message("Output directory: ", output_dir)
+  message("Files created:")
+  for (dataset_name in names(results)) {
+    message("  - ", results[[dataset_name]]$file, " (", results[[dataset_name]]$sheets_created, " sheets)")
+  }
+  
+  return(invisible(results))
+}
