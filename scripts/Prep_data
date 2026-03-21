@@ -1,0 +1,733 @@
+#PREP DATA 
+load_gene_sets
+load_variant_data
+load_constraint_data
+apply_constraint_single
+
+
+
+
+#' Load variant TSV files from a directory
+#'
+#' @param variant_dir Directory containing TSV files
+#' @param pattern File pattern (default ".tsv$")
+#'
+#' @return Named list of data frames
+#' @export
+load_variant_data <- function(variant_dir, pattern = "\\.tsv$") {
+
+  files <- list.files(
+    variant_dir,
+    pattern = pattern,
+    full.names = TRUE
+  )
+
+  dfs <- lapply(files, read.delim, stringsAsFactors = FALSE)
+  names(dfs) <- tools::file_path_sans_ext(basename(files))
+
+  dfs
+}
+
+#' Interactively load variant data
+#' @export
+load_variant_data_interactive <- function() {
+  dir <- readline("Enter path to variant directory: ")
+  load_variant_data(dir)
+}
+
+
+#' Load gene sets from directory
+#'
+#' @param gene_sets_dir Path to directory containing gene set files (CSV/TSV/TXT)
+#' @param gene_column Column name containing gene symbols (default: "Gene")
+#' @param assign_to_global Assign gene sets to global environment (default: TRUE)
+#'
+#' @return A named list of unique gene vectors
+#' @export
+load_gene_sets <- function(gene_sets_dir, 
+                          gene_column = "Gene",
+                          assign_to_global = TRUE) {
+  
+  if (!dir.exists(gene_sets_dir)) {
+    stop("Gene sets directory does not exist: ", gene_sets_dir)
+  }
+  
+  # Find all gene set files
+  files <- list.files(gene_sets_dir, 
+                     pattern = "\\.(csv|tsv|txt)$", 
+                     full.names = TRUE,
+                     ignore.case = TRUE)
+  
+  if (length(files) == 0) {
+    stop("No CSV/TSV/TXT files found in directory: ", gene_sets_dir)
+  }
+  
+  gene_sets <- list()
+  
+  for (file in files) {
+    # Get clean name from filename
+    set_name <- tools::file_path_sans_ext(basename(file))
+    cat(sprintf("Loading %s... ", set_name))
+    
+    # Read the file
+    tryCatch({
+      if (grepl("\\.csv$", file)) {
+        df <- read.csv(file, stringsAsFactors = FALSE)
+      } else if (grepl("\\.tsv$", file)) {
+        df <- read.delim(file, stringsAsFactors = FALSE)
+      } else {
+        df <- read.table(file, header = TRUE, stringsAsFactors = FALSE)
+      }
+      
+# Find gene column (case-insensitive)
+      col_names_lower <- tolower(colnames(df))
+      gene_column_lower <- tolower(gene_column)
+      
+      if (gene_column_lower %in% col_names_lower) {
+        gene_col_idx <- which(col_names_lower == gene_column_lower)[1]
+        genes <- df[[gene_col_idx]]
+      } else {
+        # Column not found
+        stop(sprintf("Column '%s' (case-insensitive) not found in file: %s", 
+                     gene_column, basename(file)))
+      }
+
+      # Clean and get unique genes
+      genes <- unique(trimws(genes))
+      genes <- genes[genes != "" & !is.na(genes)]
+      
+      gene_sets[[set_name]] <- genes
+      cat(sprintf("found %d unique genes\n", length(genes)))
+      
+      # Optionally assign to global environment
+      if (assign_to_global) {
+        global_var_name <- paste0("genes_", set_name)
+        assign(global_var_name, genes, envir = .GlobalEnv)
+      }
+      
+    }, error = function(e) {
+      cat(sprintf("ERROR: %s\n", e$message))
+    })
+  }
+  
+  if (length(gene_sets) == 0) {
+    warning("No gene sets were successfully loaded")
+  }
+  
+  return(gene_sets)
+}
+
+
+#! Process variant data with manifest
+#' Process variant data with manifest
+#'
+#' @param variant_data Named list of variant dataframes
+#' @param manifest Manifest dataframe with sample_id and Status columns
+#'
+#' @return Processed variant data with added columns
+#' @export
+process_variant_data <- function(variant_data, 
+                                manifest) {
+  
+  # Validate manifest
+  if (!"sample_id" %in% colnames(manifest)) {
+    if ("Sequencing_number" %in% colnames(manifest)) {
+      manifest$sample_id <- manifest$Sequencing_number
+    } else {
+      stop("manifest must have either 'sample_id' or 'Sequencing_number' column")
+    }
+  }
+  
+  if (!"Status" %in% colnames(manifest)) {
+    stop("manifest must have a 'Status' column")
+  }
+  
+  # Extract groups from manifest
+  groups_info <- extract_groups_from_manifest(manifest)
+  cat(sprintf("Found %d groups in manifest: %s\n", 
+              length(groups_info$groups), 
+              paste(groups_info$groups, collapse = ", ")))
+  
+  cat(sprintf("Processing %d variant datasets...\n", length(variant_data)))
+  
+  processed_data <- list()
+  
+  for (df_name in names(variant_data)) {
+    cat(sprintf("  Processing %s... ", df_name))
+    
+    df <- variant_data[[df_name]]
+    
+    # Step 1: Add sample labels
+    df <- add_sample_labels(df, manifest)
+    
+    # Step 2: Add variant counts
+    df <- add_variant_counts(df)
+    
+    processed_data[[df_name]] <- df
+    cat(sprintf("done (%d variants)\n", nrow(df)))
+  }
+  
+  # Add metadata
+  attr(processed_data, "manifest_groups") <- groups_info$groups
+  attr(processed_data, "group_counts") <- groups_info$counts
+  
+  return(processed_data)
+}
+
+#' Extract groups from manifest
+#'
+#' @param manifest_df Manifest dataframe
+#'
+#' @return List with groups and counts
+#' @export
+extract_groups_from_manifest <- function(manifest_df) {
+  
+  if (!"Status" %in% colnames(manifest_df)) {
+    stop("Manifest must contain a 'Status' column")
+  }
+  
+  groups <- sort(unique(manifest_df$Status))
+  groups <- groups[!is.na(groups)]
+  
+  counts <- manifest_df %>%
+    dplyr::count(Status, name = "n") %>%
+    dplyr::filter(!is.na(Status))
+  
+  counts_list <- stats::setNames(
+    as.list(counts$n),
+    counts$Status
+  )
+  
+  list(
+    groups = groups,
+    counts = counts_list
+  )
+}
+
+#' Add sample labels to variant data
+#'
+#' @param df Variant dataframe
+#' @param manifest Manifest with sample_id and Status
+#'
+#' @return Dataframe with added sample_label and sample_label_2 columns
+#' @export
+add_sample_labels <- function(df, manifest) {
+  if (!"SAMPLES" %in% names(df)) {
+    return(df)
+  }
+  
+  df$sample_label_2 <- sapply(df$SAMPLES, get_outlier_labels, manifest)
+  df$sample_label <- sapply(df$SAMPLES, check_outlier_label, manifest)
+  
+  return(df)
+}
+
+#' Get group labels for outlier samples
+#'
+#' @param outlier_value Comma-separated sample IDs
+#' @param manifest_df Manifest with sample_id and Status
+#'
+#' @return Comma-separated group labels
+#' @export
+get_outlier_labels <- function(outlier_value, manifest_df) {
+  
+  if (is.na(outlier_value) || outlier_value == "") {
+    return(NA)
+  }
+  
+  outlier_values <- strsplit(outlier_value, ",")[[1]]
+  
+  labels <- sapply(outlier_values, function(val) {
+    val_trimmed <- trimws(val)
+    if (val_trimmed %in% manifest_df$sample_id) {
+      manifest_df$Status[manifest_df$sample_id == val_trimmed]
+    } else {
+      NA
+    }
+  })
+  
+  paste(labels, collapse = ", ")
+}
+
+#' Check outlier label consistency
+#'
+#' @param outlier_value Comma-separated sample IDs
+#' @param manifest_df Manifest with sample_id and Status
+#'
+#' @return Either a single group or "mixed"
+#' @export
+check_outlier_label <- function(outlier_value, manifest_df) {
+  
+  if (is.na(outlier_value) || outlier_value == "") {
+    return(NA)
+  }
+  
+  outlier_values <- strsplit(outlier_value, ",")[[1]]
+  
+  labels <- sapply(outlier_values, function(val) {
+    val_trimmed <- trimws(val)
+    if (val_trimmed %in% manifest_df$sample_id) {
+      manifest_df$Status[manifest_df$sample_id == val_trimmed]
+    } else {
+      NA
+    }
+  })
+  
+  unique_labels <- unique(na.omit(labels))
+  
+  if (length(unique_labels) > 1) {
+    "mixed"
+  } else if (length(unique_labels) == 1) {
+    unique_labels
+  } else {
+    NA
+  }
+}
+
+#' Add variant counts
+#'
+#' @param df Dataframe with sample_label_2 column
+#'
+#' @return Dataframe with count column added
+#' @export
+add_variant_counts <- function(df) {
+  if (!"sample_label_2" %in% names(df)) {
+    return(df)
+  }
+  
+  df$count <- sapply(strsplit(df$sample_label_2, ","), length)
+  return(df)
+}
+
+
+apply_constraint_single <- function(variant_df, constraint_data) {
+  
+  if (!"Feature" %in% names(variant_df)) {
+    stop("Dataframe must have 'Feature' column for constraint annotation")
+  }
+  
+  cat("Applying constraint to single dataset...\n")
+  cat("Found", nrow(constraint_data), "constraint records\n")
+  
+  # Filter constraint data and keep only transcript and lof.oe_ci.upper
+  constraint_data_filtered <- constraint_data %>%
+    filter(constraint_flags == "[]") %>%
+    select(transcript, lof.oe_ci.upper)
+  
+  # Apply constraint annotation
+  df_annotated <- variant_df %>%
+    left_join(constraint_data_filtered, by = c("Feature" = "transcript"))
+  
+  # Apply LoF constraint filter
+  if ("lof.oe_ci.upper" %in% names(df_annotated)) {
+    n_before <- nrow(df_annotated)
+    df_filtered <- df_annotated %>% 
+      filter(lof.oe_ci.upper < 0.6)
+    n_after <- nrow(df_filtered)
+    
+    cat("✓ Annotated + filtered (", n_before, "→", n_after, " variants, removed ", n_before - n_after, ")\n")
+    
+    return(df_filtered)
+  } else {
+    cat("✓ Annotated (no constraint filtering - missing lof.oe_ci.upper)\n")
+    return(df_annotated)
+  }
+}
+
+create_count_dataframes <- function(
+  df,
+  name,
+  gene_lists,
+  manifest_df,
+  private = FALSE,
+  row_selection = "all",  # "all", "genes", "unique_individuals", "individuals"
+  quality_control_files = list(
+    uhr_na = "~/UHR_NA_SAMPLE_IDS.csv",
+    low_quality = "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
+  )
+) {
+  
+  # QC
+  UHR_NA_SAMPLE_IDS <- read.csv(quality_control_files$uhr_na)
+  Low_Quality <- read.delim(quality_control_files$low_quality)
+  
+  manifest_df <- normalize_manifest(manifest_df)
+  group_info <- extract_groups_from_manifest(manifest_df)
+  groups_available <- group_info$groups
+  
+  if (private) {
+    df <- df %>% dplyr::filter(count == 1)
+  }
+  
+  # Expand samples
+  expanded_df <- df %>%
+    tidyr::separate_rows(SAMPLES, sep = ",") %>%
+    dplyr::mutate(sample_id = trimws(SAMPLES),  group = sample_label
+    ) %>%
+    dplyr::filter(group %in% groups_available) %>%
+    dplyr::filter(!sample_id %in% UHR_NA_SAMPLE_IDS$V1) %>%
+    dplyr::filter(!sample_id %in% Low_Quality$Sequencing_number) %>%
+    dplyr::distinct(SYMBOL, CHROM, REF, ALT, POS, sample_id, .keep_all = TRUE)
+  
+  # Variant-level DF
+  variant_df <- df %>%
+    mutate(group = sample_label) %>%
+    filter(group %in% groups_available) %>%
+    dplyr::distinct(SYMBOL, CHROM, REF, ALT, POS, .keep_all = TRUE)
+  
+  # Annotate gene sets
+  expanded_df <- add_gene_set_annotations(expanded_df, gene_lists)
+  variant_df  <- add_gene_set_annotations(variant_df, gene_lists)
+  
+  # Generate counts
+  counts <- generate_all_counts(
+    expanded_df = expanded_df,
+    variant_df  = variant_df,
+    groups_available = groups_available,
+    gene_lists  = gene_lists
+  )
+  
+  result_df <- create_result_dataframe(
+    counts = counts,
+    name   = name,
+    groups_available = groups_available,
+    gene_lists = gene_lists,
+    row_selection = row_selection  # Pass the parameter
+  )
+  
+  result_df[is.na(result_df)] <- 0
+  result_df
+}
+
+# Add gene set annotations dynamically
+add_gene_set_annotations <- function(df, gene_lists) {
+  for (gene_set_name in names(gene_lists)) {
+    df <- df %>%
+      mutate(!!gene_set_name := ifelse(SYMBOL %in% gene_lists[[gene_set_name]], 1, 0))
+  }
+  return(df)
+}
+
+# Generate all count metrics
+generate_all_counts <- function(expanded_df, variant_df, groups_available, gene_lists) {
+  counts <- list()
+  
+  # Basic variant counts
+  counts$total_variants <- variant_df %>%
+    group_by(group) %>%
+    summarize(num_variants = n(), .groups = "drop")
+  
+  counts$individuals_with_variants <- expanded_df %>%
+    group_by(group) %>%
+    summarize(num_individuals = n(), .groups = "drop")
+  
+  counts$unique_individuals_with_variants <- expanded_df %>%
+    group_by(group) %>%
+    summarize(unique_individuals = n_distinct(sample_id), .groups = "drop")
+  
+  # Gene set specific counts
+  for (gene_set_name in names(gene_lists)) {
+    # Variant counts for this gene set
+    counts[[paste0(gene_set_name, "_variants")]] <- variant_df %>%
+      filter(.data[[gene_set_name]] == 1) %>%
+      group_by(group) %>%
+      summarize(!!paste0("num_", gene_set_name, "_variants") := n(), .groups = "drop")
+    
+    # Individual counts for this gene set
+    counts[[paste0("individuals_with_", gene_set_name, "_variants")]] <- expanded_df %>%
+      filter(.data[[gene_set_name]] == 1) %>%
+      group_by(group) %>%
+      summarize(!!paste0("num_individuals_", gene_set_name) := n(), .groups = "drop")
+    
+    counts[[paste0("unique_individuals_with_", gene_set_name, "_variants")]] <- expanded_df %>%
+      filter(.data[[gene_set_name]] == 1) %>%
+      group_by(group) %>%
+      summarize(!!paste0("unique_individuals_", gene_set_name) := n_distinct(sample_id), .groups = "drop")
+  }
+  
+  # Gene counts (unique genes)
+  counts$genes <- expanded_df %>%
+    group_by(group) %>%
+    summarize(num_genes = n_distinct(SYMBOL), .groups = "drop")
+  
+  for (gene_set_name in names(gene_lists)) {
+    counts[[paste0(gene_set_name, "_genes")]] <- expanded_df %>%
+      filter(.data[[gene_set_name]] == 1) %>%
+      group_by(group) %>%
+      summarize(!!paste0("num_", gene_set_name, "_genes") := n_distinct(SYMBOL), .groups = "drop")
+  }
+  
+  # Ensure all groups are represented (fill missing with zeros)
+  for (count_name in names(counts)) {
+    counts[[count_name]] <- counts[[count_name]] %>%
+      complete(group = groups_available, fill = list(0))
+  }
+  
+  return(counts)
+}
+# Create the final result dataframe with row selection
+create_result_dataframe <- function(counts, name, groups_available, gene_lists, row_selection = "all") {
+  
+  # Helper function to determine if a row should be included
+  should_include_row <- function(row_name_pattern) {
+    if (row_selection == "all") return(TRUE)
+    
+    if (row_selection == "genes") {
+      return(grepl("Number of.*genes in", row_name_pattern))
+    }
+    
+    if (row_selection == "unique_individuals") {
+      return(grepl("Number of individuals unique with", row_name_pattern))
+    }
+    
+    if (row_selection == "individuals") {
+      return(grepl("Number of individuals with", row_name_pattern))
+    }
+    
+    if (row_selection == "variants") {
+      # Check if row ends with "variants" AND doesn't contain "individuals" or "genes"
+      ends_with_variants <- grepl(" variants$", row_name_pattern)
+      not_about_individuals <- !grepl("individuals", row_name_pattern)
+      not_about_genes <- !grepl("genes", row_name_pattern)
+      
+      return(ends_with_variants && not_about_individuals && not_about_genes)
+    }
+    
+    return(FALSE)
+  }
+  
+  # Define all possible row names
+  all_row_names <- c(
+    # Basic counts
+    paste("Number of", name, "variants"),
+    paste("Number of individuals with", name, "variants"),
+    paste("Number of individuals unique with", name, "variants")
+  )
+  
+  # Add gene set specific rows
+  for (gene_set_name in names(gene_lists)) {
+    all_row_names <- c(
+      all_row_names,
+      paste("Number of", gene_set_name, name, "variants"),
+      paste("Number of individuals with", gene_set_name, name, "variants"),
+      paste("Number of individuals unique with", gene_set_name, name, "variants")
+    )
+  }
+  
+  # Add gene count rows
+  all_row_names <- c(
+    all_row_names,
+    paste("Number of genes in", name)
+  )
+  
+  for (gene_set_name in names(gene_lists)) {
+    all_row_names <- c(
+      all_row_names,
+      paste("Number of", gene_set_name, "genes in", name)
+    )
+  }
+  
+  # Filter rows based on selection parameter
+  if (row_selection == "all") {
+    row_names <- all_row_names
+  } else {
+    row_names <- all_row_names[sapply(all_row_names, should_include_row)]
+  }
+  
+  # Create the result dataframe
+  result_df <- data.frame(row_names = row_names)
+  
+  # Add columns for each group
+  for (group_name in groups_available) {
+    # Get all data points (including ones we might filter out later)
+    all_group_data <- c(
+      # Basic counts
+      counts$total_variants[[2]][counts$total_variants$group == group_name],
+      counts$individuals_with_variants[[2]][counts$individuals_with_variants$group == group_name],
+      counts$unique_individuals_with_variants[[2]][counts$unique_individuals_with_variants$group == group_name],
+      
+      # Gene set specific counts
+      unlist(lapply(names(gene_lists), function(gs) {
+        c(
+          counts[[paste0(gs, "_variants")]][[2]][counts[[paste0(gs, "_variants")]]$group == group_name],
+          counts[[paste0("individuals_with_", gs, "_variants")]][[2]][counts[[paste0("individuals_with_", gs, "_variants")]]$group == group_name],
+          counts[[paste0("unique_individuals_with_", gs, "_variants")]][[2]][counts[[paste0("unique_individuals_with_", gs, "_variants")]]$group == group_name]
+        )
+      })),
+      
+      # Gene counts
+      counts$genes[[2]][counts$genes$group == group_name],
+      
+      # Gene set specific gene counts
+      unlist(lapply(names(gene_lists), function(gs) {
+        counts[[paste0(gs, "_genes")]][[2]][counts[[paste0(gs, "_genes")]]$group == group_name]
+      }))
+    )
+    
+    # Filter the data to match the filtered row names
+    if (row_selection == "all") {
+      group_data <- all_group_data
+    } else {
+      # Create a mapping of row names to indices
+      row_indices <- seq_along(all_row_names)
+      names(row_indices) <- all_row_names
+      
+      # Get indices for rows we want to keep
+      keep_indices <- row_indices[row_names]
+      group_data <- all_group_data[keep_indices]
+    }
+    
+    result_df[[group_name]] <- group_data
+  }
+  
+  return(result_df)
+}
+
+normalize_manifest <- function(manifest_df) {
+  
+  required <- c("sample_id", "Status")
+  missing <- setdiff(required, colnames(manifest_df))
+  
+  if (length(missing) > 0) {
+    stop("Manifest is missing columns: ", paste(missing, collapse = ", "))
+  }
+  
+  manifest_df %>%
+    dplyr::select(sample_id, Status) %>%
+    dplyr::mutate(
+      Status = as.character(Status),
+      sample_id = as.character(sample_id)
+    )
+}
+
+
+
+
+#wilxocon kruskal tabel 
+
+create_count_dataframes_for_Wilcoxon_KRUSKAL <- function(
+  df,
+  gene_lists,
+  manifest_df,
+  private = FALSE,
+  pure = FALSE,
+  quality_control_files = list(
+    uhr_na = "~/UHR_NA_SAMPLE_IDS.csv",
+    low_quality = "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
+  )
+) {
+  
+  UHR_NA_SAMPLE_IDS <- read.csv(quality_control_files$uhr_na)
+  Low_Quality <- read.delim(quality_control_files$low_quality)
+  
+  manifest_df <- normalize_manifest(manifest_df)
+  
+  if (private) {
+    df <- df %>% dplyr::filter(count == 1)
+  }
+  if (pure) {
+    df <- df %>% dplyr::filter(sample_label != "mixed")
+  }
+
+  expanded_df <- df %>%
+    tidyr::separate_rows(SAMPLES, sep = ",") %>%
+    dplyr::mutate(sample_id = trimws(SAMPLES)) %>%
+    dplyr::left_join(manifest_df, by = "sample_id") %>%
+    dplyr::filter(!sample_id %in% UHR_NA_SAMPLE_IDS$V1) %>%
+    dplyr::filter(!sample_id %in% Low_Quality$Sequencing_number) %>%
+    dplyr::distinct(SYMBOL, CHROM, REF, ALT, POS, sample_id, .keep_all = TRUE)
+  
+  expanded_df <- add_gene_set_annotations(expanded_df, gene_lists)
+
+  if (pure){
+  expanded_df %>%
+    dplyr::group_by(sample_id, Status) %>%
+    dplyr::summarise(
+      Number_of_pure_Variants = dplyr::n(),
+      dplyr::across(
+        names(gene_lists),
+        ~ sum(.x, na.rm = TRUE),
+        .names = "Number_of_pure_{.col}_Variants"
+      ),
+      .groups = "drop"
+    )
+    }
+    else {
+      expanded_df %>%
+        dplyr::group_by(sample_id, Status) %>%
+        dplyr::summarise(
+          Number_of_Variants = dplyr::n(),
+          dplyr::across(
+            names(gene_lists),
+            ~ sum(.x, na.rm = TRUE),
+            .names = "Number_of_{.col}_Variants"
+          ),
+          .groups = "drop"
+        )
+    }
+
+}
+
+prepare_complete_dataset <- function(manifest_df, count_results) {
+
+  manifest_df <- normalize_manifest(manifest_df)
+  group_info <- extract_groups_from_manifest(manifest_df)
+  groups_available <- group_info$groups
+
+  # Filter manifest to only include valid groups
+  manifest_filtered <- manifest_df %>%
+    filter(Status %in% groups_available)
+  
+  # Merge with count results and fill missing values with 0
+  complete_df <- manifest_filtered %>%
+    left_join(count_results, by = c("sample_id", "Status")) %>%
+    mutate(across(starts_with("Number_of"), ~ ifelse(is.na(.), 0, .)))
+
+  return(complete_df)
+}
+
+
+# Batch processing function for multiple datasets
+create_wilcoxon_kruskal_tables <- function(processed_data, 
+                                          gene_lists, 
+                                          manifest_data,
+                                          private = FALSE, pure = FALSE) {
+  
+  cat("=== Creating Wilcoxon/Kruskal Count Tables ===\n")
+  cat("Group type:", group_type, "\n")
+  cat("Private variants only:", private, "\n")
+  cat("Pure variants only:", pure, "\n")
+  cat("Gene sets:", paste(names(gene_lists), collapse = ", "), "\n\n")
+  
+  count_tables <- list()
+  complete_datasets <- list()
+  
+  for (dataset_name in names(processed_data)) {
+    cat("Processing", dataset_name, "... ")
+    
+    # Create count tables
+    count_tables[[dataset_name]] <- create_count_dataframes_for_Wilcoxon_KRUSKAL(
+      df = processed_data[[dataset_name]],
+      gene_lists = gene_lists,
+      manifest_df = manifest_data,
+      private = private,
+      pure = pure,
+    )
+    
+    # Create complete datasets
+    complete_datasets[[dataset_name]] <- prepare_complete_dataset(
+      manifest_df = manifest_data,
+      count_results = count_tables[[dataset_name]]
+    )
+    
+    cat("done\n")
+  }
+  
+  cat("\n=== Wilcoxon/Kruskal Tables Complete ===\n")
+  
+  return(list(
+    count_tables = count_tables,
+    complete_datasets = complete_datasets
+  ))
+}
+
