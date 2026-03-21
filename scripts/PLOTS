@@ -100,25 +100,20 @@ create_statistical_plots <- function(results_df,
 
 # Helper function to get colors from cowplot
 get_cowplot_colors <- function(n, palette = "Set2") {
-    # Cowplot doesn't have its own palette function, so we'll use RColorBrewer or viridis
-    # But actually cowplot uses RColorBrewer palettes
-    
-    if (palette %in% rownames(RColorBrewer::brewer.pal.info)) {
-        max_colors <- RColorBrewer::brewer.pal.info[palette, "maxcolors"]
-        if (n <= max_colors) {
-            return(RColorBrewer::brewer.pal(n, palette))
-        }
+  if (palette %in% rownames(RColorBrewer::brewer.pal.info)) {
+    max_colors <- RColorBrewer::brewer.pal.info[palette, "maxcolors"]
+    n_request <- max(3, n)  # request at least 3 to avoid warning
+    if (n_request <= max_colors) {
+      return(RColorBrewer::brewer.pal(n_request, palette)[1:n])  # trim to actual n needed
     }
-    
-    # Fallback to viridis for many colors
-    if (n <= 8) {
-        # Return some default cowplot-like colors
-        default_colors <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442", 
-                           "#0072B2", "#D55E00", "#CC79A7", "#999999")
-        return(default_colors[1:n])
-    } else {
-        return(viridis::viridis(n))
-    }
+  }
+  
+  default_colors <- c("#E69F00", "#56B4E9", "#009E73", "#F0E442",
+                      "#0072B2", "#D55E00", "#CC79A7", "#999999")
+  if (n <= length(default_colors)) {
+    return(default_colors[1:n])
+  }
+  return(viridis::viridis(n))
 }
 
 # Volcano plot with cowplot styling
@@ -597,146 +592,143 @@ create_parallel_plot_cowplot <- function(results_df, is_pairwise, p_value_col, p
     
     return(p)
 }
-
-# Forest plot for effect sizes (for pairwise comparisons)
-create_forest_plot_cowplot <- function(results_df, is_pairwise, p_value_col, p_value_threshold, 
-                                      max_labels, color_palette, base_size) {
-    
-    # Check for required columns
-    if (!all(c("OR", "CI_low", "CI_high") %in% names(results_df))) {
-        stop("Forest plot requires OR, CI_low, and CI_high columns")
-    }
-    
-    # Prepare plot data
-    plot_data <- results_df %>%
-        mutate(
-            log_OR = log2(OR),
-            log_CI_low = log2(CI_low),
-            log_CI_high = log2(CI_high),
-            is_significant = .data[[p_value_col]] < p_value_threshold,
-            # Create a factor for legend
-            significance_status = ifelse(is_significant, 
-                                        paste0("Significant (", p_value_col, " < ", p_value_threshold, ")"),
-                                        paste0("Not significant (", p_value_col, " ≥ ", p_value_threshold, ")"))
-        )
-    
-    # Order by effect size using original Row
-    plot_data <- plot_data %>%
-        mutate(Row = factor(Row, levels = unique(Row[order(log_OR, decreasing = TRUE)])))
-    
-    # Determine coloring and shaping
-    if (is_pairwise && "Comparison" %in% names(plot_data)) {
-        # For pairwise: color by comparison
-        color_var <- "Comparison"
-        n_comparisons <- length(unique(plot_data$Comparison))
-        
-        # UPDATED TITLE: Different for pairwise vs non-pairwise
-        title_text <- "Pairwise Forest Plot of Effect Sizes"
-        
-    } else if ("Dataset" %in% names(plot_data) && length(unique(plot_data$Dataset)) > 1) {
-        color_var <- "Dataset"
-        n_colors <- length(unique(plot_data$Dataset))
-        title_text <- "Forest Plot of Effect Sizes by Dataset"
-    } else {
-        color_var <- "is_significant"
-        n_colors <- 2
-        title_text <- "Forest Plot of Effect Sizes"
-    }
-    
-    # Create forest plot
-    p <- ggplot(plot_data, aes(x = log_OR, y = Row)) +
-        geom_vline(xintercept = 0, linetype = "dashed", color = "grey60", size = 0.8) +
-        theme_cowplot(font_size = base_size) +
-        theme(
-            legend.position = "bottom",
-            plot.title = element_text(hjust = 0.5),
-            axis.text.y = element_text(size = base_size * 0.8),
-            panel.grid.major.x = element_line(color = "grey90", size = 0.2)
-        )
-    
-    # First, plot all points with hollow/filled distinction
-    # We'll create a custom legend for point style
-    p <- p +
-        # Plot all points with appropriate style
-        geom_point(aes(color = .data[[color_var]],
-                      shape = significance_status,
-                      fill = ifelse(is_significant, .data[[color_var]], "white")),
-                  size = 3, position = position_dodge(width = 0.3),
-                  stroke = ifelse(plot_data$is_significant, 0.5, 0.8)) +
-        # Add error bars with transparency
-        geom_errorbarh(aes(xmin = log_CI_low, xmax = log_CI_high, 
-                          color = .data[[color_var]], alpha = is_significant),
-                      height = 0.2, size = 0.8, position = position_dodge(width = 0.3)) +
-        scale_alpha_manual(values = c("FALSE" = 0.3, "TRUE" = 0.8), guide = "none")
-    
-    # Set colors based on the color variable
-    if (color_var == "is_significant") {
-        colors <- c("FALSE" = "grey70", "TRUE" = "#E41A1C")
-        fill_colors <- c("white" = "white", "#E41A1C" = "#E41A1C")
-        color_labels <- c("FALSE" = "Not significant", 
-                         "TRUE" = paste0("Significant (", p_value_col, " < ", p_value_threshold, ")"))
-    } else {
-        n_colors <- length(unique(plot_data[[color_var]]))
-        colors <- get_cowplot_colors(n_colors, color_palette)
-        names(colors) <- unique(plot_data[[color_var]])
-        fill_colors <- c("white" = "white", colors)
-        color_labels <- colors
-    }
-    
-    # Create shape scale for hollow vs filled
-    shape_values <- c(21, 16)  # 21 = hollow, 16 = filled
-    names(shape_values) <- c(paste0("Not significant (", p_value_col, " ≥ ", p_value_threshold, ")"),
-                            paste0("Significant (", p_value_col, " < ", p_value_threshold, ")"))
-    
-    # Apply scales
-    p <- p +
-        scale_color_manual(values = colors, 
-                          labels = if(color_var == "is_significant") color_labels else waiver(),
-                          name = ifelse(color_var == "is_significant", "Significance", color_var)) +
-        scale_fill_manual(values = fill_colors, guide = "none") +
-        scale_shape_manual(values = shape_values, 
-                          name = "Point Style",
-                          labels = c(
-                              paste0("Hollow: Not significant (", p_value_col, " ≥ ", p_value_threshold, ")"),
-                              paste0("Filled: Significant (", p_value_col, " < ", p_value_threshold, ")")
-                          ))
-    
-    # Add title and labels
-    p <- p +
-        labs(
-            title = title_text,
-            x = "log₂(Odds Ratio) with 95% CI",
-            y = "Feature"
-        )
-    
-    # Adjust legend for pairwise comparisons
-    if (is_pairwise && "Comparison" %in% names(plot_data)) {
-        p <- p + guides(
-            color = guide_legend(title = "Comparison", 
-                                override.aes = list(shape = 16, fill = colors, stroke = 0.5),
-                                nrow = 2, byrow = TRUE),
-            shape = guide_legend(title = "Point Style",
-                                override.aes = list(color = "black", fill = c("white", "black")))
-        )
-    } else if (color_var == "is_significant") {
-        p <- p + guides(
-            color = guide_legend(title = "Significance",
-                                override.aes = list(shape = c(21, 16), 
-                                                   fill = c("white", "#E41A1C"),
-                                                   stroke = c(0.8, 0.5))),
-            shape = guide_legend(title = "Point Style",
-                                override.aes = list(color = "black", fill = c("white", "black")))
-        )
-    } else {
-        p <- p + guides(
-            color = guide_legend(title = color_var,
-                                override.aes = list(shape = 16, fill = colors, stroke = 0.5)),
-            shape = guide_legend(title = "Point Style",
-                                override.aes = list(color = "black", fill = c("white", "black")))
-        )
-    }
-    
-    return(p)
+create_forest_plot_cowplot <- function(results_df, is_pairwise, p_value_col, p_value_threshold,
+                                       max_labels, color_palette, base_size) {
+  
+  if (!all(c("OR", "CI_low", "CI_high") %in% names(results_df))) {
+    stop("Forest plot requires OR, CI_low, and CI_high columns")
+  }
+  
+  not_sig_label <- paste0("Not significant (", p_value_col, " \u2265 ", p_value_threshold, ")")
+  sig_label     <- paste0("Significant (", p_value_col, " < ",  p_value_threshold, ")")
+  
+  plot_data <- results_df %>%
+    mutate(
+      log_OR      = log2(OR),
+      log_CI_low  = log2(CI_low),
+      log_CI_high = log2(CI_high),
+      is_significant      = .data[[p_value_col]] < p_value_threshold,
+      significance_status = ifelse(is_significant, sig_label, not_sig_label),
+      # make factor so scale only contains levels present in data
+      significance_status = factor(significance_status, 
+                                   levels = c(not_sig_label, sig_label))
+    ) %>%
+    mutate(Row = factor(Row, levels = unique(Row[order(log_OR, decreasing = TRUE)])))
+  
+  # Drop unused factor levels — critical for shape/fill scales
+  plot_data$significance_status <- droplevels(plot_data$significance_status)
+  levels_present <- levels(plot_data$significance_status)
+  
+  # Determine color variable
+  if (is_pairwise && "Comparison" %in% names(plot_data)) {
+    color_var    <- "Comparison"
+    n_colors     <- length(unique(plot_data$Comparison))
+    title_text   <- "Pairwise Forest Plot of Effect Sizes"
+  } else if ("Dataset" %in% names(plot_data) && length(unique(plot_data$Dataset)) > 1) {
+    color_var    <- "Dataset"
+    n_colors     <- length(unique(plot_data$Dataset))
+    title_text   <- "Forest Plot of Effect Sizes by Dataset"
+  } else {
+    color_var    <- "is_significant"
+    n_colors     <- 2
+    title_text   <- "Forest Plot of Effect Sizes"
+  }
+  
+  # Build color palette
+  if (color_var == "is_significant") {
+    colors <- c("FALSE" = "grey70", "TRUE" = "#E41A1C")
+  } else {
+    colors <- get_cowplot_colors(n_colors, color_palette)
+    names(colors) <- unique(plot_data[[color_var]])
+  }
+  
+  # Shape scale — only levels that exist in the data
+  all_shapes        <- c(21, 16)
+  names(all_shapes) <- c(not_sig_label, sig_label)
+  shape_values      <- all_shapes[levels_present]   # subset to present levels only
+  
+  # Fill scale
+  fill_colors <- c("white" = "white", colors)
+  
+  # Base plot
+  p <- ggplot(plot_data, aes(x = log_OR, y = Row)) +
+    geom_vline(xintercept = 0, linetype = "dashed", color = "grey60", linewidth = 0.8) +
+    theme_cowplot(font_size = base_size) +
+    theme(
+      legend.position      = "bottom",
+      plot.title           = element_text(hjust = 0.5),
+      axis.text.y          = element_text(size = base_size * 0.8),
+      panel.grid.major.x   = element_line(color = "grey90", linewidth = 0.2)
+    )
+  
+  # Points — stroke as mapped aesthetic to avoid vector-as-fixed issue
+  p <- p +
+    geom_point(
+      aes(color = .data[[color_var]],
+          shape = significance_status,
+          fill  = ifelse(is_significant, .data[[color_var]], "white"),
+          stroke = ifelse(is_significant, 0.5, 0.8)),   # now inside aes
+      size     = 3,
+      position = position_dodge(width = 0.3)
+    ) +
+    geom_errorbar(   # replaces deprecated geom_errorbarh
+      aes(xmin  = log_CI_low,
+          xmax  = log_CI_high,
+          color = .data[[color_var]],
+          alpha = is_significant),
+      height   = 0.2,
+      linewidth = 0.8,
+      orientation = "y",
+      position = position_dodge(width = 0.3)
+    ) +
+    scale_alpha_manual(values = c("FALSE" = 0.3, "TRUE" = 0.8), guide = "none") +
+    scale_shape_manual(
+      values = shape_values,   # only levels present
+      name   = "Point Style"
+    ) +
+    scale_fill_manual(values = fill_colors, guide = "none")
+  
+  # Color scale
+  if (color_var == "is_significant") {
+    p <- p + scale_color_manual(
+      values = colors,
+      labels = c("FALSE" = "Not significant", "TRUE" = paste0("p < ", p_value_threshold)),
+      name   = "Significance"
+    )
+  } else {
+    p <- p + scale_color_manual(values = colors, name = color_var)
+  }
+  
+  p <- p + labs(
+    title = title_text,
+    x     = "log\u2082(Odds Ratio) with 95% CI",
+    y     = "Feature"
+  )
+  
+  # Guide overrides — built dynamically from levels_present
+  shape_fill_override <- ifelse(levels_present == sig_label, "black", "white")
+  
+  p <- p + guides(
+    shape = guide_legend(
+      title         = "Point Style",
+      override.aes  = list(
+        color = "black",
+        fill  = shape_fill_override   # same length as levels_present
+      )
+    )
+  )
+  
+  if (is_pairwise && "Comparison" %in% names(plot_data)) {
+    p <- p + guides(
+      color = guide_legend(
+        title        = "Comparison",
+        override.aes = list(shape = 16, fill = colors, stroke = 0.5),
+        nrow = 2, byrow = TRUE
+      )
+    )
+  }
+  
+  return(p)
 }
 
 # Batch plotting function (removed comparison_order parameter)
