@@ -1,8 +1,8 @@
 #PREP DATA 
-load_gene_sets
-load_variant_data
-load_constraint_data
-apply_constraint_single
+# load_gene_sets
+# load_variant_data
+# load_constraint_data
+# apply_constraint_single
 
 
 
@@ -694,7 +694,6 @@ create_wilcoxon_kruskal_tables <- function(processed_data,
                                           private = FALSE, pure = FALSE) {
   
   cat("=== Creating Wilcoxon/Kruskal Count Tables ===\n")
-  cat("Group type:", group_type, "\n")
   cat("Private variants only:", private, "\n")
   cat("Pure variants only:", pure, "\n")
   cat("Gene sets:", paste(names(gene_lists), collapse = ", "), "\n\n")
