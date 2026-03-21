@@ -146,7 +146,7 @@ cat("SECTION A: 2-GROUP ANALYSIS\n")
 cat("========================================\n\n")
 
 
-
+manifest_2group <- manifest_clean
 # --------------------------------------------------
 # A1. Process variant data (adds sample labels)
 # --------------------------------------------------
