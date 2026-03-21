@@ -30,7 +30,11 @@ library(dunn.test)
 library(RColorBrewer)
 
 # Source all refactored functions
-source("all_together.r")
+setwd("/home/rachele/SNVs/try/SNVs_pipeline_final/scripts")
+source("Prep_data.r")
+source("report.r")
+source("statistics functions.r")
+source("PLOTS.r")
 
 
 # ============================================================
@@ -45,7 +49,7 @@ MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manif
 # QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
 
 # Output base
-OUTPUT_BASE        <- "/home/rachele/SNVs/try/lof_only"
+OUTPUT_BASE        <- "/home/rachele/SNVs/try"
 
 # Samples to eliminate (hardcoded from original executed files)
 # ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
@@ -92,8 +96,8 @@ gene_sets <- load_gene_sets(GENE_SETS_DIR, gene_column = "Gene")
 gene_lists <- list(
   brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
   brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
-  schema_pval = unique(gene_sets[["SCHEMA_pVal"]]),      # adjust key to match your filename
-  schema_qval = unique(gene_sets[["SCHEMA_qVal"]]),
+  schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+  schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
   bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
   gwas        = unique(gene_sets[["GWAS_120"]])
 )
@@ -206,7 +210,7 @@ wilcoxon_counts_2group_notprivate  <- create_wilcoxon_kruskal_tables(
         gene_lists  = gene_lists,
         manifest_data = manifest_2group,
         private     = FALSE,
-        pure        = FALSE
+        pure        = TRUE
      )
 
 
@@ -235,7 +239,7 @@ fisher_plots_notprivate <- create_comprehensive_visualization(
 )
 
 wilcoxon_plots_notprivate <- create_variant_plots(
-  plot_data         = complete_dfs_2group_notprivate,
+  plot_data         = wilcoxon_counts_2group_notprivate$complete_datasets,
   results_table     = wilcoxon_df_notprivate,
   significant_only  = TRUE
 )
@@ -307,7 +311,7 @@ wilcoxon_counts_2group_private  <- create_wilcoxon_kruskal_tables(
         gene_lists  = gene_lists,
         manifest_data = manifest_2group,
         private     = TRUE,
-        pure        = FALSE
+        pure        = TRUE
      )
 
 
@@ -316,7 +320,7 @@ wilcoxon_counts_2group_private  <- create_wilcoxon_kruskal_tables(
 # Wilcoxon tests
 cat("Running Wilcoxon tests (private)...\n")
 wilcoxon_results_2group_private <- run_wilcoxon_kruskal_analysis(
-  data_df          = complete_dfs_2group_private,
+  data_df          = wilcoxon_counts_2group_private$complete_datasets,
   fdr_scope        = "both",
   run_dunn_posthoc = FALSE
 )
@@ -334,7 +338,7 @@ fisher_plots_private <- create_comprehensive_visualization(
 )
 
 wilcoxon_plots_private <- create_variant_plots(
-  plot_data        = complete_dfs_2group_private,
+  plot_data        = wilcoxon_counts_2group_private$complete_datasets,
   results_table    = wilcoxon_df_private,
   significant_only = TRUE
 )
