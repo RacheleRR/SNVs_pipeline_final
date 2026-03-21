@@ -41,14 +41,14 @@ source("all_together.r")
 VARIANT_DIR        <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE"
 GENE_SETS_DIR      <- "/home/rachele/SNVs/gene_sets_folder"   # folder with csv/tsv gene set files
 MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
-QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
-QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
+# QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
+# QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
 
 # Output base
-OUTPUT_BASE        <- "/home/rachele/SNVs/results_January_2026/lof_only"
+OUTPUT_BASE        <- "/home/rachele/SNVs/try/lof_only"
 
 # Samples to eliminate (hardcoded from original executed files)
-ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
+# ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
 
 
 # ============================================================
@@ -114,6 +114,7 @@ if ("Sequencing_number" %in% colnames(manifest_raw)) {
   manifest_clean <- manifest_raw %>%
     rename(sample_id = Sequencing_number) %>%      # rename if exists
     filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
     filter(sample_id != "")                         # remove empty sample_ids
 } else {
   manifest_clean <- manifest_raw %>%
@@ -215,7 +216,7 @@ wilcoxon_counts_2group_notprivate  <- create_wilcoxon_kruskal_tables(
 # Wilcoxon tests
 cat("Running Wilcoxon tests (not private)...\n")
 wilcoxon_results_2group_notprivate <- run_wilcoxon_kruskal_analysis(
-  data_df        = complete_dfs_2group_notprivate,
+  data_df        = wilcoxon_counts_2group_notprivate$complete_datasets,
   fdr_scope      = "both",
   run_dunn_posthoc = FALSE   # 2 groups, no post-hoc needed
 )
@@ -302,7 +303,7 @@ rates_2group_private <- calculate_rates(
 cat("Creating Wilcoxon count tables (private)...\n")
 wilcoxon_counts_2group_private <- list()
 wilcoxon_counts_2group_private  <- create_wilcoxon_kruskal_tables(
-        processed_data = processed_2group,
+        processed_data = processed_2group$complete_datasets,
         gene_lists  = gene_lists,
         manifest_data = manifest_2group,
         private     = TRUE,
