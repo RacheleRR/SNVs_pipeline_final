@@ -171,7 +171,8 @@ for (ds_name in names(processed_2group)) {
     name        = ds_name,
     gene_lists  = gene_lists,
     manifest_df = manifest_2group,
-    private     = FALSE
+    private     = FALSE,
+    row_selection = "unique_individuals"
   )
 }
 
@@ -187,29 +188,29 @@ fisher_results_2group_notprivate <- run_fisher_with_manifest_enhanced(
 # Rates
 cat("Calculating rates (not private)...\n")
 rates_2group_notprivate <- calculate_rates(
-  data_df    = fisher_counts_2group_notprivate,
+  data_df    = processed_2group,
   manifest   = manifest_2group,
-  gene_lists = gene_lists
+  gene_lists = gene_lists,
+  rows = "all",
+  private = FALSE,
+  row_selection = "variants"
 )
 
 # Wilcoxon count tables
 cat("Creating Wilcoxon count tables (not private)...\n")
 wilcoxon_counts_2group_notprivate <- list()
-complete_dfs_2group_notprivate    <- list()
 
-for (ds_name in names(processed_2group)) {
-  wilcoxon_counts_2group_notprivate[[ds_name]] <- create_count_dataframes_for_Wilcoxon_KRUSKAL(
-    df          = processed_2group[[ds_name]],
-    gene_lists  = gene_lists,
-    manifest_df = manifest_2group,
-    private     = FALSE,
-    pure        = FALSE
-  )
-  complete_dfs_2group_notprivate[[ds_name]] <- prepare_complete_dataset(
-    manifest_df   = manifest_2group,
-    count_results = wilcoxon_counts_2group_notprivate[[ds_name]]
-  )
-}
+wilcoxon_counts_2group_notprivate  <- create_wilcoxon_kruskal_tables(
+        processed_data  = processed_2group,
+        gene_lists  = gene_lists,
+        manifest_data = manifest_2group,
+        private     = FALSE,
+        pure        = FALSE
+     )
+
+
+
+
 
 # Wilcoxon tests
 cat("Running Wilcoxon tests (not private)...\n")
@@ -218,6 +219,7 @@ wilcoxon_results_2group_notprivate <- run_wilcoxon_kruskal_analysis(
   fdr_scope      = "both",
   run_dunn_posthoc = FALSE   # 2 groups, no post-hoc needed
 )
+
 wilcoxon_df_notprivate <- results_to_dataframe(wilcoxon_results_2group_notprivate)
 
 # Plots
@@ -271,7 +273,8 @@ for (ds_name in names(processed_2group)) {
     name        = ds_name,
     gene_lists  = gene_lists,
     manifest_df = manifest_2group,
-    private     = TRUE
+    private     = TRUE,
+    row_selection = "unique_individuals"
   )
 }
 
@@ -287,29 +290,27 @@ fisher_results_2group_private <- run_fisher_with_manifest_enhanced(
 # Rates
 cat("Calculating rates (private)...\n")
 rates_2group_private <- calculate_rates(
-  data_df    = fisher_counts_2group_private,
+  data_df    = processed_2group,
   manifest   = manifest_2group,
-  gene_lists = gene_lists
+  gene_lists = gene_lists,
+  rows = "all",
+  private = TRUE,
+  row_selection = "variants"
 )
 
 # Wilcoxon count tables
 cat("Creating Wilcoxon count tables (private)...\n")
 wilcoxon_counts_2group_private <- list()
-complete_dfs_2group_private    <- list()
+wilcoxon_counts_2group_private  <- create_wilcoxon_kruskal_tables(
+        processed_data = processed_2group,
+        gene_lists  = gene_lists,
+        manifest_data = manifest_2group,
+        private     = TRUE,
+        pure        = FALSE
+     )
 
-for (ds_name in names(processed_2group)) {
-  wilcoxon_counts_2group_private[[ds_name]] <- create_count_dataframes_for_Wilcoxon_KRUSKAL(
-    df          = processed_2group[[ds_name]],
-    gene_lists  = gene_lists,
-    manifest_df = manifest_2group,
-    private     = TRUE,
-    pure        = FALSE
-  )
-  complete_dfs_2group_private[[ds_name]] <- prepare_complete_dataset(
-    manifest_df   = manifest_2group,
-    count_results = wilcoxon_counts_2group_private[[ds_name]]
-  )
-}
+
+
 
 # Wilcoxon tests
 cat("Running Wilcoxon tests (private)...\n")
@@ -379,7 +380,13 @@ for (ds_name in names(processed_2group)) {
     gene_column  = "SYMBOL",
     sample_column = "SAMPLES"
   )
+  create_enrichment_excel(
+    datasets = processed_2group,
+    output_dir   = output_2group_gene, 
+    gene_lists   = gene_lists
+  )
 }
+
 cat("Gene lists Excel done.\n\n")
 
 # ============================================================

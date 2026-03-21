@@ -192,7 +192,8 @@ for (ds_name in names(processed_4group)) {
       brain_ntpm = gene_lists$brain_ntpm
     ),  # 4-group executed file only used brain gene sets for Fisher
     manifest_df = manifest_4group,
-    private     = FALSE
+    private     = FALSE,
+    row_selection = "unique_individuals"
   )
 }
 
@@ -208,19 +209,19 @@ fisher_results_4group_notprivate <- run_fisher_with_manifest_enhanced(
 # Rates
 cat("Calculating rates (not private)...\n")
 rates_4group_notprivate <- calculate_rates(
-  data_df    = fisher_counts_4group_notprivate,
+  data_df    = processed_4group,
   manifest   = manifest_4group,
-  gene_lists = list(brain = gene_lists$brain, brain_ntpm = gene_lists$brain_ntpm)
+  gene_lists = list(brain = gene_lists$brain, brain_ntpm = gene_lists$brain_ntpm),
+  rows = "all",
+  private = FALSE,
+  row_selection = "variants"
 )
 
 # Kruskal count tables
 cat("Creating Kruskal count tables (not private)...\n")
 kruskal_counts_4group_notprivate <- list()
-complete_dfs_4group_notprivate   <- list()
-
-for (ds_name in names(processed_4group)) {
-  kruskal_counts_4group_notprivate[[ds_name]] <- create_count_dataframes_for_Wilcoxon_KRUSKAL(
-    df          = processed_4group[[ds_name]],
+kruskal_counts_4group_notprivate <- create_wilcoxon_kruskal_tables(
+     df          = processed_4group,
     gene_lists  = list(
       brain      = gene_lists$brain,
       brain_ntpm = gene_lists$brain_ntpm
@@ -229,11 +230,8 @@ for (ds_name in names(processed_4group)) {
     private     = FALSE,
     pure        = FALSE
   )
-  complete_dfs_4group_notprivate[[ds_name]] <- prepare_complete_dataset(
-    manifest_df   = manifest_4group,
-    count_results = kruskal_counts_4group_notprivate[[ds_name]]
-  )
-}
+
+
 
 # Kruskal-Wallis + Dunn post-hoc (auto-detected because >2 groups)
 cat("Running Kruskal-Wallis tests (not private)...\n")
@@ -302,6 +300,11 @@ for (ds_name in names(processed_4group)) {
     group_column  = "sample_label",
     gene_column   = "SYMBOL",
     sample_column = "SAMPLES"
+  )
+  create_enrichment_excel(
+    datasets = processed_4group,
+    output_dir   = output_4group_gene, 
+    gene_lists   = gene_lists
   )
 }
 cat("Gene lists Excel done.\n\n")
