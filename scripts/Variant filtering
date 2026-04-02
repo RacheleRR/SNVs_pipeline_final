@@ -19,7 +19,7 @@
 BASE="/media/rachele/DATA/SNVs"
 
 # Input file (VEP-annotated, gnomAD MPC-filtered)
-INPUT_RAW="${BASE}/Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.vcf.gz"
+INPUT_RAW="${BASE}/Rubiu.v2-GRCh38.deepvariant.splitted.norm.vep.merged.vcf.gz"
 
 # Log file — captures all terminal output
 LOG="${BASE}/pipeline_$(date +%Y%m%d_%H%M%S).log"
