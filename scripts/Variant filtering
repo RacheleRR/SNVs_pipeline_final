@@ -4,18 +4,19 @@
 
 # =============================================================================
 # Pipeline overview:
-#   1. Allele frequency filter (gnomAD AF < 1%)
-#   2. Split into PTV and Missense branches
-#   3. Recompress + index
-#   4. ClinVar annotation
-#   5. Pathogenicity filtering
-#   6. Export to TSV
-#   7. QC variant counts
+#   1. MPC v2 annotation 
+#   2. Allele frequency filter (gnomAD AF < 1%)
+#   3. Split into PTV and Missense branches
+#   4. Recompress + index
+#   5. ClinVar annotation
+#   6. Pathogenicity filtering
+#   7. Export to TSV
+#   8. QC variant counts
 # =============================================================================
 
 # --- PATHS & VARIABLES -------------------------------------------------------
 
-BASE="/media/rachele/One Touch"
+BASE="/media/rachele/DATA/SNVs"
 
 # Input file (VEP-annotated, gnomAD MPC-filtered)
 INPUT_RAW="${BASE}/Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.vcf.gz"
@@ -30,44 +31,58 @@ echo "Pipeline started: $(date)"
 echo "Log file: $LOG"
 
 # Output directories
-DIR_FILTERED="${BASE}/01_filtered"
-DIR_CLINVAR="${BASE}/02_clinvar_annotated"
-DIR_PATHOGENIC="${BASE}/03_pathogenic"
-DIR_TSV="${BASE}/04_tsv"
+DIR_ANNOTATED="${BASE}/01_MPC_annotated"
+DIR_FILTERED="${BASE}/02_filtered"
+DIR_CLINVAR="${BASE}/03_clinvar_annotated"
+DIR_PATHOGENIC="${BASE}/04_pathogenic"
+DIR_TSV="${BASE}/05_tsv"
 
-mkdir -p "$DIR_FILTERED" "$DIR_CLINVAR" "$DIR_PATHOGENIC" "$DIR_TSV"
+mkdir -p "$DIR_ANNOTATED" "$DIR_FILTERED" "$DIR_CLINVAR" "$DIR_PATHOGENIC" "$DIR_TSV"
 
 # ClinVar reference file (update date as needed)
-CLINVAR="clinvar_20250729.chr.vcf.gz"
+CLINVAR="${BASE}/clinvar_20250729.chr.vcf.gz"
+
+# MPC refrence file 
+MPC="${BASE}/MPC_v2.GRCh38.bcf"
 
 # TSV conversion scripts
-VCF_TO_TSV_PASTEUR="/vcf_to_tsv_PASTEUR/transform_VCF.sh"
-VCF_TO_TSV_CLINVAR="/vcf_to_tsv_ClinVAR/transform_VCF.sh"
+VCF_TO_TSV_PASTEUR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_PASTEUR/transform_VCF.sh"
+VCF_TO_TSV_CLINVAR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_ClinVAR/transform_VCF.sh"
+
+# --- STEP 1 ADD BCFT TOOLS ANNOTATION -----------------------------------------
+# Add the MPC v2 annotations 
+echo ">>> STEP 1: MPC annotation"
+MPC_ANNOTATED="${DIR_ANNOTATED}/MPC_annotated.vcf.gz"
+
+bcftools annotate \
+  -a "$MPC" \
+  -c INFO \
+  -Oz -o "$MPC_ANNOTATED" \
+  "$INPUT_RAW"
 
 
-# --- STEP 1: ALLELE FREQUENCY FILTER -----------------------------------------
+# --- STEP 2: ALLELE FREQUENCY FILTER -----------------------------------------
 # Exclude variants with gnomAD genome AF > 1% (common variants)
 
-echo ">>> STEP 1: Allele frequency filter"
-
+echo ">>> STEP 2: Allele frequency filter"
 AF_FILTERED="${DIR_FILTERED}/AF_filtered.vcf.gz"
 
 bcftools view \
   -e 'INFO/AF_genomes > 0.01' \
   -Oz -o "$AF_FILTERED" \
-  "$INPUT_RAW"
+  "$MPC_ANNOTATED"
 
 echo "AF-filtered output: $AF_FILTERED"
 
 
-# --- STEP 2A: MISSENSE BRANCH ------------------------------------------------
+# --- STEP 3A: MISSENSE BRANCH ------------------------------------------------
 # Filter for high-impact missense variants:
 #   - MPC >= 2.6 (missense pathogenicity constraint)
 #   - AlphaMissense pathogenicity >= 0.565
 #   - Canonical transcript only
 
 echo ""
-echo ">>> STEP 2A: Missense filter (MPC + AlphaMissense + Canonical)"
+echo ">>> STEP 3A: Missense filter (MPC + AlphaMissense + Canonical)"
 
 MISSENSE_MPC="${DIR_FILTERED}/missense_MPC.vcf.gz"
 MISSENSE_FINAL="${DIR_FILTERED}/missense_MPC_AM_canonical.vcf.gz"
@@ -88,12 +103,12 @@ filter_vep \
 echo "Missense output: $MISSENSE_FINAL"
 
 
-# --- STEP 2B: PTV BRANCH -----------------------------------------------------
+# --- STEP 3B: PTV BRANCH -----------------------------------------------------
 # Filter for high-confidence protein-truncating variants (PTVs)
 # on canonical transcripts only (LOFTEE HC)
 
 echo ""
-echo ">>> STEP 2B: PTV filter (LoF HC + Canonical)"
+echo ">>> STEP 3B: PTV filter (LoF HC + Canonical)"
 
 PTV_FINAL="${DIR_FILTERED}/PTV_HC_canonical.vcf.gz"
 
@@ -106,11 +121,11 @@ filter_vep \
 echo "PTV output: $PTV_FINAL"
 
 
-# --- STEP 3: RECOMPRESS + INDEX ----------------------------------------------
+# --- STEP 4: RECOMPRESS + INDEX ----------------------------------------------
 # Ensure BGZF compression and tabix indexing for downstream bcftools steps
 
 echo ""
-echo ">>> STEP 3: Recompress and index filtered files"
+echo ">>> STEP 4: Recompress and index filtered files"
 
 for input in "$MISSENSE_FINAL" "$PTV_FINAL"; do
   echo "Processing: $input"
@@ -130,11 +145,11 @@ for input in "$MISSENSE_FINAL" "$PTV_FINAL"; do
 done
 
 
-# --- STEP 4: CLINVAR ANNOTATION ----------------------------------------------
+# --- STEP 5: CLINVAR ANNOTATION ----------------------------------------------
 # Add ClinVar fields: CLNSIG, CLNDN, GENEINFO, CLNVC etc.
 
 echo ""
-echo ">>> STEP 4: ClinVar annotation"
+echo ">>> STEP 5: ClinVar annotation"
 
 CLINVAR_FIELDS="INFO/CLNSIG,INFO/CLNSIGCONF,INFO/CLNDN,INFO/CLNDNINCL,INFO/CLNDISDB,INFO/GENEINFO,INFO/CLNVC"
 
@@ -161,11 +176,11 @@ echo "ClinVar-annotated PTV:      $PTV_CLINVAR"
 echo "ClinVar-annotated Missense: $MISSENSE_CLINVAR"
 
 
-# --- STEP 5: CLINVAR PATHOGENICITY FILTER ------------------------------------
+# --- STEP 6: CLINVAR PATHOGENICITY FILTER ------------------------------------
 # Lenient filter: catches all P/LP combinations including mixed annotations
 
 echo ""
-echo ">>> STEP 5: ClinVar pathogenicity filter (lenient)"
+echo ">>> STEP 6: ClinVar pathogenicity filter (lenient)"
 
 lenient_filter='INFO/CLNSIG~"^Pathogenic$" ||
   INFO/CLNSIG~"^Likely_pathogenic$" ||
@@ -194,10 +209,10 @@ for category in "PTV_HC_canonical" "missense_MPC_AM_canonical"; do
 done
 
 
-# --- STEP 6: EXPORT TO TSV ---------------------------------------------------
+# --- STEP 7: EXPORT TO TSV ---------------------------------------------------
 
 echo ""
-echo ">>> STEP 6: Export to TSV"
+echo ">>> STEP 7: Export to TSV"
 
 # Non-ClinVar filtered files
 "$VCF_TO_TSV_PASTEUR" -i "$PTV_FINAL"
@@ -210,11 +225,11 @@ echo ">>> STEP 6: Export to TSV"
 #not sure if we should as welltrasnform the oncenot filtered byclinvar but with clinvar annotation
 
 
-# --- STEP 7: QC — VARIANT COUNTS ---------------------------------------------
+# --- STEP 8: QC — VARIANT COUNTS ---------------------------------------------
 # Summary of variant counts across all output files
 
 echo ""
-echo ">>> STEP 7: QC — Variant counts"
+echo ">>> STEP 8: QC — Variant counts"
 echo ""
 
 QC_COUNTS="${BASE}/QC_variant_counts.tsv"
@@ -225,8 +240,8 @@ declare -A step_labels=(
   ["$MISSENSE_MPC"]="2a_Missense_MPC"
   ["$MISSENSE_FINAL"]="2a_Missense_MPC_AM_canonical"
   ["$PTV_FINAL"]="2b_PTV_HC_canonical"
-  ["${DIR_PATHOGENIC}/${SAMPLE}_PTV_HC_canonical_ClinVar_pathogenic.vcf.gz"]="5_PTV_pathogenic"
-  ["${DIR_PATHOGENIC}/${SAMPLE}_missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"]="5_Missense_pathogenic"
+  ["${DIR_PATHOGENIC}/PTV_HC_canonical_ClinVar_pathogenic.vcf.gz"]="5_PTV_pathogenic"
+  ["${DIR_PATHOGENIC}/missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"]="5_Missense_pathogenic"
 )
  
 echo ""
@@ -238,8 +253,8 @@ for file in \
   "$MISSENSE_MPC" \
   "$MISSENSE_FINAL" \
   "$PTV_FINAL" \
-  "${DIR_PATHOGENIC}/${SAMPLE}_PTV_HC_canonical_ClinVar_pathogenic.vcf.gz" \
-  "${DIR_PATHOGENIC}/${SAMPLE}_missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"; do
+  "${DIR_PATHOGENIC}/PTV_HC_canonical_ClinVar_pathogenic.vcf.gz" \
+  "${DIR_PATHOGENIC}/missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"; do
     count=$(bcftools view -H "$file" | wc -l)
     step="${step_labels[$file]}"
     fname="$(basename "$file")"
