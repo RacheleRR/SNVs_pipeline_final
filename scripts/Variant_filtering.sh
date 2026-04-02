@@ -49,6 +49,32 @@ MPC="${BASE}/MPC_v2.GRCh38.bcf"
 VCF_TO_TSV_PASTEUR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_PASTEUR/transform_VCF.sh"
 VCF_TO_TSV_CLINVAR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_ClinVAR/transform_VCF.sh"
 
+# ----- BASIC CHECKS-----------------
+
+# Index input file if not already indexed
+if [ ! -f "${INPUT_RAW}.tbi" ]; then
+  echo "Checking sort order..."
+  
+  SORTED_INPUT="${BASE}/Rubiu.v2-GRCh38.deepvariant.splitted.norm.vep.merged.sorted.vcf.gz"
+  
+  if [ ! -f "$SORTED_INPUT" ]; then
+    echo "Sorting input file (this may take a while)..."
+    bcftools sort \
+      -Oz -o "$SORTED_INPUT" \
+      --temp-dir "${BASE}/tmp" \
+      "$INPUT_RAW"
+  fi
+
+  echo "Indexing sorted file..."
+  tabix -p vcf "$SORTED_INPUT"
+  
+  # Update INPUT_RAW to point to sorted file
+  INPUT_RAW="$SORTED_INPUT"
+  echo "Input file updated to sorted version: $INPUT_RAW"
+else
+  echo "Input index already exists, skipping"
+fi
+
 # --- STEP 1 ADD BCFT TOOLS ANNOTATION -----------------------------------------
 # Add the MPC v2 annotations 
 echo ">>> STEP 1: MPC annotation"

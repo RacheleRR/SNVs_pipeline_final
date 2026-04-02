@@ -1,0 +1,191 @@
+# ============================================================
+# SNV ANALYSIS - EXECUTION SCRIPT
+# Uses functions from all_together.r
+# Covers: 2-group (Case/Control)
+# Both private and non-private variants
+# ============================================================
+
+# ============================================================
+# 1. LIBRARIES
+# ============================================================
+
+library(readr)
+library(data.table)
+library(dplyr)
+library(gprofiler2)
+library(httr)
+library(readxl)
+library(tidyr)
+library(stringr)
+library(purrr)
+library(broom)
+library(ggplot2)
+library(cowplot)
+library(ggrepel)
+library(openxlsx)
+library(gridExtra)
+library(ggsignif)
+library(FSA)
+library(dunn.test)
+library(RColorBrewer)
+
+# Source all refactored functions
+setwd("/home/rachele/SNVs/try/SNVs_pipeline_final/scripts")
+source("Prep_data.r")
+source("report.r")
+source("statistics functions.r")
+source("PLOTS.r")
+
+
+# ============================================================
+# 2. PARAMETERS — edit these to change paths or outputs
+# ============================================================
+
+# Input paths
+VARIANT_DIR        <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE"
+GENE_SETS_DIR      <- "/home/rachele/SNVs/results_final_2026_march"   # folder with csv/tsv gene set files
+# MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
+MANIFEST_PATH      <- "/home/rachele/SNVs/try/manifest_fake.csv"
+# QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
+# QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
+
+# Output base
+OUTPUT_BASE        <- "/home/rachele/SNVs/try"
+
+# Samples to eliminate (hardcoded from original executed files)
+# ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
+
+
+# ============================================================
+# 3. LOAD RAW DATA
+# ============================================================
+
+cat("=== Loading variant data ===\n")
+raw_variant_data <- load_variant_data(VARIANT_DIR)
+
+# Rename from ugly VCF filenames to short names
+# (matches what was done manually in the executed files)
+Missense_canonical <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.missense_mpc_AM_CANONIC.vcf.gz"]]
+PTV_canonic       <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.PTV_HC.vcf.gz"]]
+gnomad.v4.1.constraint_metrics <- raw_variant_data[["gnomad.v4.1.constraint_metrics"]]
+rm(raw_variant_data)
+
+cat("Variant data loaded.\n\n")
+
+# ============================================================
+# 4. APPLY CONSTRAINT FILTER (lof.oe_ci.upper < 0.6)
+# ============================================================
+
+cat("=== Applying constraint filter ===\n")
+# gnomad.v4.1.constraint_metrics must already be loaded in your environment
+Missense_canonical <- apply_constraint_single(Missense_canonical, gnomad.v4.1.constraint_metrics)
+PTV_canonic        <- apply_constraint_single(PTV_canonic,        gnomad.v4.1.constraint_metrics)
+cat("Constraint filter applied.\n\n")
+
+
+Missense_canonical$SAMPLES <- gsub("_pool", "", Missense_canonical$SAMPLES)
+
+# ============================================================
+# 5. LOAD GENE SETS FROM FOLDER
+# ============================================================
+
+cat("=== Loading gene sets ===\n")
+# load_gene_sets reads all csv/tsv/txt from the folder
+# and assigns genes_<filename> to global env automatically
+gene_sets <- load_gene_sets(GENE_SETS_DIR, gene_column = "Gene")
+
+# Build the gene_lists named list used by all downstream functions
+# Adjust names to match what is in your gene sets folder
+gene_lists <- list(
+  brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
+  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
+  schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+  schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
+  bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
+  gwas        = unique(gene_sets[["GWAS_120"]])
+)
+
+gene_lists <- list(
+  brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
+  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
+  schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+  schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
+  bipolar     = unique(gene_sets[["BipEx_Bipolar"]])
+)
+
+cat("Gene sets loaded:", paste(names(gene_lists), collapse = ", "), "\n\n")
+
+# ============================================================
+# 6. LOAD AND CLEAN MANIFEST
+# ============================================================
+
+cat("=== Loading manifest ===\n")
+manifest_raw <- read.delim(MANIFEST_PATH)
+
+# Rename columns to match what refactored functions expect:
+# sample_id and Status
+# Check if 'Sequencing_number' exists before renaming
+if ("Sequencing_number" %in% colnames(manifest_raw)) {
+  manifest_clean <- manifest_raw %>%
+    rename(sample_id = Sequencing_number) %>%      # rename if exists
+    filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
+    filter(sample_id != "")                         # remove empty sample_ids
+} else {
+  manifest_clean <- manifest_raw %>%
+    filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
+    filter(sample_id != "")                         # remove empty sample_ids
+}
+
+cat("Manifest cleaned. Sample counts per group:\n")
+print(table(manifest_clean$Status))
+cat("\n")
+
+# ============================================================
+# 7. VARIANT DATASETS LIST (used across both analyses)
+# ============================================================
+
+all_variant_datasets <- list(
+  Missense_canonical = Missense_canonical,
+  PTV_canonic        = PTV_canonic
+)
+
+# ============================================================
+# ============================================================
+# SECTION A: 2-GROUP ANALYSIS (Case vs Control)
+# ============================================================
+# ============================================================
+
+cat("\n\n========================================\n")
+cat("SECTION A: 2-GROUP ANALYSIS\n")
+cat("========================================\n\n")
+
+
+manifest_2group <- manifest_clean
+# --------------------------------------------------
+# A1. Process variant data (adds sample labels)
+# --------------------------------------------------
+cat("--- Processing variant data for 2-group ---\n")
+processed_2group <- process_variant_data(
+  variant_data = all_variant_datasets,
+  manifest     = manifest_2group
+)
+
+processed_2group <- lapply(processed_2group, function(df) {
+  df %>% filter(!is.na(sample_label))
+})
+
+# Fisher count tables
+cat("Creating Fisher count tables (not private)...\n")
+fisher_counts_2group_notprivate <- list()
+for (ds_name in names(processed_2group)) {
+  fisher_counts_2group_notprivate[[ds_name]] <- create_count_dataframes(
+    df          = processed_2group[[ds_name]],
+    name        = ds_name,
+    gene_lists  = gene_lists,
+    manifest_df = manifest_2group,
+    private     = FALSE,
+    row_selection = "unique_individuals"
+  )
+}

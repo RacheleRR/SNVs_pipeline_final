@@ -43,8 +43,9 @@ source("PLOTS.r")
 
 # Input paths
 VARIANT_DIR        <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE"
-GENE_SETS_DIR      <- "/home/rachele/SNVs/gene_sets_folder"   # folder with csv/tsv gene set files
-MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
+GENE_SETS_DIR      <- "/home/rachele/SNVs/results_final_2026_march"   # folder with csv/tsv gene set files
+# MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
+MANIFEST_PATH      <- "/home/rachele/SNVs/try/manifest_fake.csv"
 # QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
 # QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
 
@@ -66,6 +67,7 @@ raw_variant_data <- load_variant_data(VARIANT_DIR)
 # (matches what was done manually in the executed files)
 Missense_canonical <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.missense_mpc_AM_CANONIC.vcf.gz"]]
 PTV_canonic       <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.PTV_HC.vcf.gz"]]
+gnomad.v4.1.constraint_metrics <- raw_variant_data[["gnomad.v4.1.constraint_metrics"]]
 rm(raw_variant_data)
 
 cat("Variant data loaded.\n\n")
@@ -123,6 +125,7 @@ if ("Sequencing_number" %in% colnames(manifest_raw)) {
 } else {
   manifest_clean <- manifest_raw %>%
     filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
     filter(sample_id != "")                         # remove empty sample_ids
 }
 
@@ -160,6 +163,9 @@ processed_2group <- process_variant_data(
   manifest     = manifest_2group
 )
 
+processed_2group <- lapply(processed_2group, function(df) {
+  df %>% filter(!is.na(sample_label))
+})
 # --------------------------------------------------
 # A2. NOT PRIVATE — Fisher + Wilcoxon
 # --------------------------------------------------
@@ -167,6 +173,7 @@ cat("\n--- A2: NOT PRIVATE ---\n")
 output_2group_notprivate <- file.path(OUTPUT_BASE, "group2", "not_private")
 dir.create(output_2group_notprivate, recursive = TRUE, showWarnings = FALSE)
 
+#! REMEMBER TO EXCLUDE AND CHNAGE THE FUNCTION IF YOU DONT HAVE THE SAMPLES YOU WANT TO EXCLUDE
 # Fisher count tables
 cat("Creating Fisher count tables (not private)...\n")
 fisher_counts_2group_notprivate <- list()
