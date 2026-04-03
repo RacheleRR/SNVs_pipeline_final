@@ -86,6 +86,8 @@ bcftools annotate \
   -Oz -o "$MPC_ANNOTATED" \
   "$INPUT_RAW"
 
+tabix -p vcf "$MPC_ANNOTATED"
+
 
 # --- STEP 2: ALLELE FREQUENCY FILTER -----------------------------------------
 # Exclude variants with gnomAD genome AF > 1% (common variants)
