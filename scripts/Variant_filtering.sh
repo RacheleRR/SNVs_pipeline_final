@@ -36,8 +36,9 @@ DIR_FILTERED="${BASE}/02_filtered"
 DIR_CLINVAR="${BASE}/03_clinvar_annotated"
 DIR_PATHOGENIC="${BASE}/04_pathogenic"
 DIR_TSV="${BASE}/05_tsv"
+DIR_COUNT="${BASE}/06_tsv"
 
-mkdir -p "$DIR_ANNOTATED" "$DIR_FILTERED" "$DIR_CLINVAR" "$DIR_PATHOGENIC" "$DIR_TSV"
+mkdir -p "$DIR_ANNOTATED" "$DIR_FILTERED" "$DIR_CLINVAR" "$DIR_PATHOGENIC" "$DIR_TSV" "$DIR_COUNT"
 
 # ClinVar reference file (update date as needed)
 CLINVAR="${BASE}/clinvar_20250729.chr.vcf.gz"
@@ -46,8 +47,8 @@ CLINVAR="${BASE}/clinvar_20250729.chr.vcf.gz"
 MPC="${BASE}/MPC_v2.GRCh38.bcf"
 
 # TSV conversion scripts
-VCF_TO_TSV_PASTEUR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_PASTEUR/transform_VCF.sh"
-VCF_TO_TSV_CLINVAR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_ClinVAR/transform_VCF.sh"
+VCF_TO_TSV_PASTEUR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_PASTEUR/"
+VCF_TO_TSV_CLINVAR="/home/rachele/SNVs/scripts_with_pasteur_data/vcf_to_tsv_ClinVAR"
 
 # ----- BASIC CHECKS-----------------
 
@@ -96,9 +97,12 @@ echo ">>> STEP 2: Allele frequency filter"
 AF_FILTERED="${DIR_FILTERED}/AF_filtered.vcf.gz"
 
 bcftools view \
-  -e 'INFO/AF_genomes > 0.01' \
+  --threads 22 \
+  -e 'INFO/gnomad_AF > 0.01' \
   -Oz -o "$AF_FILTERED" \
   "$MPC_ANNOTATED"
+
+tabix -p vcf "$AF_FILTERED"
 
 echo "AF-filtered output: $AF_FILTERED"
 
@@ -117,6 +121,7 @@ MISSENSE_FINAL="${DIR_FILTERED}/missense_MPC_AM_canonical.vcf.gz"
 
 # First pass: MPC score threshold
 bcftools view \
+  --threads 22 \
   -i 'MPC >= 2.6' \
   -Oz -o "$MISSENSE_MPC" \
   "$AF_FILTERED"
@@ -185,12 +190,14 @@ PTV_CLINVAR="${DIR_CLINVAR}/PTV_HC_canonical_ClinVar.vcf.gz"
 MISSENSE_CLINVAR="${DIR_CLINVAR}/missense_MPC_AM_canonical_ClinVar.vcf.gz"
 
 bcftools annotate \
+  --threads 22 \
   -a "$CLINVAR" \
   -c "$CLINVAR_FIELDS" \
   -Oz -o "$PTV_CLINVAR" \
   "$PTV_FINAL"
 
 bcftools annotate \
+  --threads 22 \
   -a "$CLINVAR" \
   -c "$CLINVAR_FIELDS" \
   -Oz -o "$MISSENSE_CLINVAR" \
@@ -229,7 +236,7 @@ for category in "PTV_HC_canonical" "missense_MPC_AM_canonical"; do
   output="${DIR_PATHOGENIC}/${category}_ClinVar_pathogenic.vcf.gz"
 
   echo "Filtering: $input"
-  bcftools view -i "$lenient_filter" -Oz -o "$output" "$input"
+  bcftools view --threads 22 -i "$lenient_filter" -Oz -o "$output" "$input"
   tabix -p vcf "$output"
   echo "Output: $output"
   echo "Variant count: $(bcftools view -H "$output" | wc -l)"
@@ -242,13 +249,16 @@ done
 echo ""
 echo ">>> STEP 7: Export to TSV"
 
+cd "$VCF_TO_TSV_PASTEUR"
 # Non-ClinVar filtered files
-"$VCF_TO_TSV_PASTEUR" -i "$PTV_FINAL"
-"$VCF_TO_TSV_PASTEUR" -i "$MISSENSE_FINAL"
+bash ./transform_VCF.sh -i "$PTV_FINAL"
+bash ./transform_VCF.sh -i "$MISSENSE_FINAL"
 
+cd "$VCF_TO_TSV_CLINVAR"
 # ClinVar pathogenic files
-"$VCF_TO_TSV_CLINVAR" -i "${DIR_PATHOGENIC}/PTV_HC_canonical_ClinVar_pathogenic.vcf.gz"
-"$VCF_TO_TSV_CLINVAR" -i "${DIR_PATHOGENIC}/missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"
+bash ./transform_VCF.sh -i "${DIR_PATHOGENIC}/PTV_HC_canonical_ClinVar_pathogenic.vcf.gz"
+bash ./transform_VCF.sh -i "${DIR_PATHOGENIC}/missense_MPC_AM_canonical_ClinVar_pathogenic.vcf.gz"
+
 
 #not sure if we should as welltrasnform the oncenot filtered byclinvar but with clinvar annotation
 
@@ -260,7 +270,7 @@ echo ""
 echo ">>> STEP 8: QC — Variant counts"
 echo ""
 
-QC_COUNTS="${BASE}/QC_variant_counts.tsv"
+QC_COUNTS="${DIR_COUNT}/QC_variant_counts.tsv"
 echo -e "Step\tFile\tVariant_Count" > "$QC_COUNTS"
  
 declare -A step_labels=(
@@ -294,7 +304,7 @@ echo ""
 echo "Variant counts saved to: $QC_COUNTS"
 
 # Also dump CLNSIG annotation breakdown per ClinVar-annotated file
-CLNSIG_REPORT="${BASE}/QC_ClinVar_annotation_counts.tsv"
+CLNSIG_REPORT="${DIR_COUNT}/QC_ClinVar_annotation_counts.tsv"
 echo -e "File\tCLNSIG_Annotation\tCount" > "$CLNSIG_REPORT"
 
 for file in "$PTV_CLINVAR" "$MISSENSE_CLINVAR"; do
