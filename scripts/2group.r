@@ -42,15 +42,15 @@ source("PLOTS.r")
 # ============================================================
 
 # Input paths
-VARIANT_DIR        <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE"
+VARIANT_DIR        <- "/media/rachele/DATA/SNVs/05_tsv"
 GENE_SETS_DIR      <- "/home/rachele/SNVs/results_final_2026_march"   # folder with csv/tsv gene set files
 # MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
-MANIFEST_PATH      <- "/home/rachele/SNVs/try/manifest_fake.csv"
+MANIFEST_PATH      <- "/home/rachele/SNVs/results_final_2026_march/final_samples_WGS_noduplicates_noUHRNA_nobadqc.tsv"
 # QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
 # QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
 
 # Output base
-OUTPUT_BASE        <- "/home/rachele/SNVs/try"
+OUTPUT_BASE        <- "/home/rachele/SNVs/results_final_2026_march"
 
 # Samples to eliminate (hardcoded from original executed files)
 # ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
@@ -69,6 +69,9 @@ Missense_canonical <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.
 PTV_canonic       <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.PTV_HC.vcf.gz"]]
 gnomad.v4.1.constraint_metrics <- raw_variant_data[["gnomad.v4.1.constraint_metrics"]]
 rm(raw_variant_data)
+
+Missense_canonical$SAMPLES <- gsub("_pool", "", Missense_canonical$SAMPLES)
+PTV_canonic$SAMPLES <- gsub("_pool", "", PTV_canonic$SAMPLES)
 
 cat("Variant data loaded.\n\n")
 
