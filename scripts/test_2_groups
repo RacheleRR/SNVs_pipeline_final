@@ -84,6 +84,8 @@ cat("Constraint filter applied.\n\n")
 
 
 Missense_canonical$SAMPLES <- gsub("_pool", "", Missense_canonical$SAMPLES)
+PTV_canonic$SAMPLES <- gsub("_pool", "", PTV_canonic$SAMPLES)
+
 
 # ============================================================
 # 5. LOAD GENE SETS FROM FOLDER
