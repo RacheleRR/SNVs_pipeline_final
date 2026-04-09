@@ -30,7 +30,7 @@ library(dunn.test)
 library(RColorBrewer)
 
 # Source all refactored functions
-setwd("/home/rachele/SNVs/try/SNVs_pipeline_final/scripts")
+setwd("/home/rachele/SNVs/try/new/SNVs_pipeline_final/scripts")
 source("Prep_data.r")
 source("report.r")
 source("statistics functions.r")
@@ -65,9 +65,8 @@ raw_variant_data <- load_variant_data(VARIANT_DIR)
 
 # Rename from ugly VCF filenames to short names
 # (matches what was done manually in the executed files)
-Missense_canonical <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.missense_mpc_AM_CANONIC.vcf.gz"]]
-PTV_canonic       <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.PTV_HC.vcf.gz"]]
-gnomad.v4.1.constraint_metrics <- raw_variant_data[["gnomad.v4.1.constraint_metrics"]]
+Missense_canonical <- raw_variant_data[["missense_MPC_AM_canonical.vcf.gz"]]
+PTV_canonic       <- raw_variant_data[["PTV_HC_canonical.vcf.gz"]]
 rm(raw_variant_data)
 
 Missense_canonical$SAMPLES <- gsub("_pool", "", Missense_canonical$SAMPLES)
@@ -81,11 +80,13 @@ cat("Variant data loaded.\n\n")
 
 cat("=== Applying constraint filter ===\n")
 # gnomad.v4.1.constraint_metrics must already be loaded in your environment
+gnomad.v4.1.constraint_metrics <- read.delim("~/SNVs/results_final_2026_march/gnomad.v4.1.constraint_metrics.tsv")
 Missense_canonical <- apply_constraint_single(Missense_canonical, gnomad.v4.1.constraint_metrics)
 PTV_canonic        <- apply_constraint_single(PTV_canonic,        gnomad.v4.1.constraint_metrics)
 cat("Constraint filter applied.\n\n")
 
-
+PTV_canonic <- PTV_canonic%>% filter(AF < 0.05)
+Missense_canonical <- Missense_canonical%>% filter(AF < 0.05)
 
 # ============================================================
 # 5. LOAD GENE SETS FROM FOLDER
@@ -98,13 +99,18 @@ gene_sets <- load_gene_sets(GENE_SETS_DIR, gene_column = "Gene")
 
 # Build the gene_lists named list used by all downstream functions
 # Adjust names to match what is in your gene sets folder
+# gene_lists <- list(
+#   brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
+#   brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
+#   schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+#   schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
+#   bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
+#   gwas        = unique(gene_sets[["GWAS_120"]])
+# )
+
 gene_lists <- list(
   brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
-  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
-  schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
-  schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
-  bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
-  gwas        = unique(gene_sets[["GWAS_120"]])
+  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]])
 )
 
 cat("Gene sets loaded:", paste(names(gene_lists), collapse = ", "), "\n\n")
@@ -317,7 +323,7 @@ rates_2group_private <- calculate_rates(
 cat("Creating Wilcoxon count tables (private)...\n")
 wilcoxon_counts_2group_private <- list()
 wilcoxon_counts_2group_private  <- create_wilcoxon_kruskal_tables(
-        processed_data = processed_2group$complete_datasets,
+        processed_data = processed_2group,
         gene_lists  = gene_lists,
         manifest_data = manifest_2group,
         private     = TRUE,
@@ -378,6 +384,15 @@ cat("--- A4: Gene lists Excel (2-group) ---\n")
 output_2group_gene <- file.path(OUTPUT_BASE, "group2", "gene")
 dir.create(output_2group_gene, recursive = TRUE, showWarnings = FALSE)
 
+gene_lists <- list(
+  brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
+  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
+  schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+  schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
+  bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
+  gwas        = unique(gene_sets[["GWAS_120"]])
+)
+
 for (ds_name in names(processed_2group)) {
   create_gene_lists_excel(
     df           = processed_2group[[ds_name]],
@@ -388,11 +403,12 @@ for (ds_name in names(processed_2group)) {
     gene_column  = "SYMBOL"
   )
   create_gene_list_summary(
-    df           = processed_2group[[ds_name]],
-    gene_lists   = gene_lists,
-    output_dir   = output_2group_gene,
-    group_column = "sample_label",
-    gene_column  = "SYMBOL",
+    df            = processed_2group[[ds_name]],
+    gene_lists    = gene_lists,
+    output_dir    = output_2group_gene,
+    dataset_name  = ds_name,              # <-- ADD THIS
+    group_column  = "sample_label",
+    gene_column   = "SYMBOL",
     sample_column = "SAMPLES"
   )
   create_enrichment_excel(
