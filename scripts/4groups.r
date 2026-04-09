@@ -30,7 +30,11 @@ library(dunn.test)
 library(RColorBrewer)
 
 # Source all refactored functions
-source("all_together.r")
+setwd("/home/rachele/SNVs/try/new/SNVs_pipeline_final/scripts")
+source("Prep_data.r")
+source("report.r")
+source("statistics functions.r")
+source("PLOTS.r")
 
 
 # ============================================================
@@ -38,17 +42,18 @@ source("all_together.r")
 # ============================================================
 
 # Input paths
-VARIANT_DIR        <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE"
-GENE_SETS_DIR      <- "/home/rachele/SNVs/gene_sets_folder"   # folder with csv/tsv gene set files
-MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
-QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
-QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
+VARIANT_DIR        <- "/media/rachele/DATA/SNVs/05_tsv"
+GENE_SETS_DIR      <- "/home/rachele/SNVs/results_final_2026_march"   # folder with csv/tsv gene set files
+# MANIFEST_PATH      <- "/home/rachele/SNVs/results_pasteur_tsv_With_FEATURE/manifest_correct.tsv"
+MANIFEST_PATH      <- "/home/rachele/SNVs/results_final_2026_march/manifest_clean_4Groups.tsv"
+# QC_UHR_PATH        <- "~/UHR_NA_SAMPLE_IDS.csv"
+# QC_LOWQUAL_PATH    <- "~/Low_Quality_SAMPLES_AND_UHR_NA.tsv"
 
 # Output base
-OUTPUT_BASE        <- "/home/rachele/SNVs/results_January_2026/lof_only"
+OUTPUT_BASE        <- "/home/rachele/SNVs/results_final_2026_march"
 
 # Samples to eliminate (hardcoded from original executed files)
-ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
+# ELIMINATE_SAMPLES  <- c("S36913", "S36916", "S36917", "S36919", "S36959")
 
 
 # ============================================================
@@ -60,9 +65,12 @@ raw_variant_data <- load_variant_data(VARIANT_DIR)
 
 # Rename from ugly VCF filenames to short names
 # (matches what was done manually in the executed files)
-Missense_canonical <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.missense_mpc_AM_CANONIC.vcf.gz"]]
-PTV_canonic       <- raw_variant_data[["Rubiu-GRCh38.deepvariant.splitted.norm.vep.merged.filtered_gnomad_mpc2.filtered_rarity_stringent_AF.PTV_HC.vcf.gz"]]
+Missense_canonical <- raw_variant_data[["missense_MPC_AM_canonical.vcf.gz"]]
+PTV_canonic       <- raw_variant_data[["PTV_HC_canonical.vcf.gz"]]
 rm(raw_variant_data)
+
+Missense_canonical$SAMPLES <- gsub("_pool", "", Missense_canonical$SAMPLES)
+PTV_canonic$SAMPLES <- gsub("_pool", "", PTV_canonic$SAMPLES)
 
 cat("Variant data loaded.\n\n")
 
@@ -72,12 +80,13 @@ cat("Variant data loaded.\n\n")
 
 cat("=== Applying constraint filter ===\n")
 # gnomad.v4.1.constraint_metrics must already be loaded in your environment
+gnomad.v4.1.constraint_metrics <- read.delim("~/SNVs/results_final_2026_march/gnomad.v4.1.constraint_metrics.tsv")
 Missense_canonical <- apply_constraint_single(Missense_canonical, gnomad.v4.1.constraint_metrics)
 PTV_canonic        <- apply_constraint_single(PTV_canonic,        gnomad.v4.1.constraint_metrics)
 cat("Constraint filter applied.\n\n")
 
 
-
+PTV_canonic <- PTV_canonic%>% filter(AF < 0.05)
 # ============================================================
 # 5. LOAD GENE SETS FROM FOLDER
 # ============================================================
@@ -89,15 +98,19 @@ gene_sets <- load_gene_sets(GENE_SETS_DIR, gene_column = "Gene")
 
 # Build the gene_lists named list used by all downstream functions
 # Adjust names to match what is in your gene sets folder
+# gene_lists <- list(
+#   brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
+#   brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
+#   schema_pval = unique(gene_sets[["SCHEMA_pval"]]),      # adjust key to match your filename
+#   schema_qval = unique(gene_sets[["SCHEMA_qval"]]),
+#   bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
+#   gwas        = unique(gene_sets[["GWAS_120"]])
+# )
+
 gene_lists <- list(
   brain      = unique(gene_sets[["brain_gene_consensus_filtered_consensus_no_pitular"]]),
-  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]]),
-  schema_pval = unique(gene_sets[["SCHEMA_pVal"]]),      # adjust key to match your filename
-  schema_qval = unique(gene_sets[["SCHEMA_qVal"]]),
-  bipolar     = unique(gene_sets[["BipEx_Bipolar"]]),
-  gwas        = unique(gene_sets[["GWAS_120"]])
+  brain_ntpm = unique(gene_sets[["brain_gene_consensus_ntm_consensus_no_pitular"]])
 )
-
 cat("Gene sets loaded:", paste(names(gene_lists), collapse = ", "), "\n\n")
 
 # ============================================================
@@ -114,12 +127,15 @@ if ("Sequencing_number" %in% colnames(manifest_raw)) {
   manifest_clean <- manifest_raw %>%
     rename(sample_id = Sequencing_number) %>%      # rename if exists
     filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
     filter(sample_id != "")                         # remove empty sample_ids
 } else {
   manifest_clean <- manifest_raw %>%
     filter(!grepl("UHR_NA", Status)) %>%           # remove UHR_NA group entries
+    filter(!grepl("UHR-NA", Status)) %>%           # remove UHR_NA group entries
     filter(sample_id != "")                         # remove empty sample_ids
 }
+
 
 cat("Manifest cleaned. Sample counts per group:\n")
 print(table(manifest_clean$Status))
@@ -228,7 +244,7 @@ kruskal_counts_4group_notprivate <- create_wilcoxon_kruskal_tables(
     ),
     manifest_data= manifest_4group,
     private     = FALSE,
-    pure        = TRUE
+    pure        = FALSE
   )
 
 
