@@ -22,10 +22,10 @@
 create_gene_list_summary <- function(df,
                                      gene_lists,
                                      output_dir = getwd(),
+                                     dataset_name = "dataset",   # <-- ADD THIS
                                      group_column = "sample_label",
-                                     gene_column = "SYMBOL",
-                                     sample_column = "SAMPLES"
-                      ) {
+                                     gene_column  = "SYMBOL",
+                                     sample_column = "SAMPLES") {
   
   # Validate input
   required_columns <- c(group_column, gene_column, sample_column)
@@ -255,7 +255,7 @@ create_gene_list_summary <- function(df,
                  widths = "auto")
     
     # Save the workbook
-    output_file <- file.path(output_dir, "gene_list_summary.xlsx")
+    output_file <- file.path(output_dir, paste0("gene_list_summary_", dataset_name, ".xlsx"))
     saveWorkbook(wb, output_file, overwrite = TRUE)
     message(sprintf("\nSummary saved to: %s", output_file))
     message("Sheets included:")
