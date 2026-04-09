@@ -809,9 +809,15 @@ create_variant_plots <- function(plot_data,
             cat("Processing:", dataset_name, "\n")
             
             # Get the corresponding results for this dataset
+            id_col <- intersect(c("Dataset", "variant_type"), names(results_table))[1]
+
+            if (is.na(id_col)) {
+                warning("No recognized ID column found in results_table")
+                next
+            }
+
             dataset_results <- results_table %>%
-                filter(Dataset == dataset_name | is.null(Dataset) | 
-                      variant_type == dataset_name)  # Support both naming conventions
+                filter(.data[[id_col]] == dataset_name)
             
             if (nrow(dataset_results) == 0) {
                 warning("No results found for dataset: ", dataset_name)
