@@ -313,6 +313,7 @@ for (ds_name in names(processed_4group)) {
     df            = processed_4group[[ds_name]],
     gene_lists    = gene_lists,
     output_dir    = output_4group_gene,
+    dataset_name  = ds_name,
     group_column  = "sample_label",
     gene_column   = "SYMBOL",
     sample_column = "SAMPLES"
